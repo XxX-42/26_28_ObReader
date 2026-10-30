@@ -1043,6 +1043,8 @@ html.pdf-reader-chord-pan #viewerContainer * { cursor: grabbing !important; user
 .pdfReaderPageContextText { white-space: nowrap; font-size: 15px; }
 .pdfReaderPageContextMenu button:hover, .pdfReaderPageContextMenu button:focus-visible { background: #8883; }
 
-.pdfReaderPointerTool { position: fixed; left: 12px; bottom: 12px; z-index: 100002; width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 50%; background: rgba(130,130,130,.18); color: rgba(75,75,75,.65); backdrop-filter: blur(5px); box-shadow: 0 0 10px 5px rgba(130,130,130,.13); cursor: pointer; }
-.pdfReaderPointerTool svg { width: 19px; height: 19px; fill: currentColor; }
-.pdfReaderPointerTool:hover { background: rgba(130,130,130,.3); }
+.pdfToolWheel .pdfToolWheelPointer { left: -18%; top: 96%; width: 70px; height: 65px; transform: translate(-20%, -35%); pointer-events: none; opacity: .65; filter: drop-shadow(0 0 5px #ffffff66); }
+.pdfToolWheelPointer svg { overflow: visible; }
+.pdfToolWheelPointer .pointerPad { fill: #545b68aa; stroke: none; pointer-events: auto; filter: blur(.5px); }
+.pdfToolWheelPointer .pointerGlyph { fill: white; stroke: none; pointer-events: none; }
+.pdfToolWheel .pdfToolWheelPointer:hover { opacity: .9; }

@@ -251,6 +251,14 @@
   });
   const wheelColors = window.PdfReaderInputRuntime?.ToolWheelColorController && new window.PdfReaderInputRuntime.ToolWheelColorController({
     getWheel: () => (state.app || window.PDFViewerApplication)?._toolWheel,
+    activatePointer: wheel => {
+      const app = state.app;
+      if (!app || app._toolWheel !== wheel || state.disposed) return;
+      wheel.element.remove(); app._toolWheel = null; app._toolWheelPointer = null;
+      app._toolWheelSuppressUntil = performanceNow() + 1000;
+      if (!state.readOnly && app.pdfViewer.annotationEditorMode !== -1) app.eventBus.dispatch("switchannotationeditormode", { source: window, mode: 0, createNewEditor: false });
+      app.eventBus.dispatch("switchcursortool", { source: window, tool: 0 });
+    },
     getToolKey: item => wheelToolKeys.get(item.mode),
     getColor: key => annotationToolColors?.get(wheelToolModes.get(key)),
     commit: ({ item, color, wheel }) => {
@@ -9602,18 +9610,6 @@
     state.inputRouter = router;
     state.pointerAbortController = router.start();
     installPageLayoutContextMenu(state.pointerAbortController.signal);
-    const pointerButton = document.createElement("button");
-    pointerButton.type = "button";
-    pointerButton.className = "pdfReaderPointerTool";
-    pointerButton.setAttribute("aria-label", "普通指针工具");
-    pointerButton.title = "普通指针工具";
-    pointerButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 2v16l4-4 3 7 3-1-3-7h6z"/></svg>';
-    document.body.append(pointerButton);
-    pointerButton.addEventListener("click", () => {
-      if (!state.readOnly && state.app?.pdfViewer?.annotationEditorMode !== -1) state.app?.eventBus?.dispatch("switchannotationeditormode", { source: window, mode: 0, isFromKeyboard: false, createNewEditor: false });
-      state.app?.eventBus?.dispatch("switchcursortool", { source: window, tool: 0 });
-    }, { signal: state.pointerAbortController.signal });
-    state.pointerAbortController.signal.addEventListener("abort", () => pointerButton.remove(), { once: true });
     if (state.vocabularyEnabled && state.activeDocumentId && Number.isInteger(state.activeOpenRequest)) {
       requestVocabularyReadMode(state.activeDocumentId, state.activeOpenRequest);
     }

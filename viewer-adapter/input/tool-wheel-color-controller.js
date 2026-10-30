@@ -7,8 +7,8 @@
   // Install before PDF.js registers its capture listeners: its wheel consumes
   // pointermove and pointerup with stopImmediatePropagation.
   class ToolWheelColorController {
-    constructor({ getWheel, getToolKey, getColor, commit, window: host = window }) {
-      Object.assign(this, { getWheel, getToolKey, getColor, commit, host });
+    constructor({ getWheel, getToolKey, getColor, commit, activatePointer, window: host = window }) {
+      Object.assign(this, { getWheel, getToolKey, getColor, commit, activatePointer, host });
       this.move = this.move.bind(this);
       this.up = this.up.bind(this);
       this.cancel = this.cancel.bind(this);
@@ -84,6 +84,16 @@
     }
 
     decorate(wheel) {
+      if (!wheel.pointerControl && this.activatePointer) {
+        const button = wheel.element.ownerDocument.createElement("button");
+        button.className = "pdfToolWheelPointer";
+        button.type = "button";
+        button.setAttribute("aria-label", "普通指针工具"); button.title = "普通指针工具";
+        button.innerHTML = '<svg viewBox="0 0 70 65" aria-hidden="true"><path class="pointerPad" d="M7 4 Q18 35 58 43 Q67 45 64 55 Q28 65 5 39 Q-2 27 4 6 Q5 3 7 4Z"/><path class="pointerGlyph" d="M24 34v16l4-4 3 7 3-1-3-7h6z"/></svg>';
+        button.addEventListener("click", event => { event.preventDefault(); event.stopImmediatePropagation(); this.activatePointer(wheel); });
+        wheel.element.append(button); wheel.pointerControl = button;
+      }
+
       if (!wheel.colorLayoutPositioned) {
         const margin = 40;
         const maxRadius = Math.min(this.host.innerWidth, this.host.innerHeight) / 2 - margin;
@@ -207,6 +217,9 @@
 
     up(event) {
       const wheel = this.getWheel();
+      if (wheel && (event.target?.closest?.(".pdfToolWheelPointer") || wheel.element.ownerDocument.elementFromPoint?.(event.clientX, event.clientY)?.closest?.(".pdfToolWheelPointer")) && [0, 1].includes(event.button)) {
+        event.preventDefault(); event.stopImmediatePropagation(); this.clear(); this.activatePointer?.(wheel); return;
+      }
       if (!wheel || wheel !== this.palette?.wheel || event.pointerId !== wheel.pointerId || event.button !== 1) return;
       const swatch = this.hit(event.clientX, event.clientY);
       if (!swatch) return;

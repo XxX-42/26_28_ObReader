@@ -4350,7 +4350,14 @@ test(
       hostFocusPauseResume:hostFocusAfterResume,
     }, null, 2), "utf8");
 
-    await click(".pdfReaderPointerTool");
+    const pointerWheelPoint = await viewer.evaluate(() => { const r=document.getElementById("viewerContainer").getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2}; });
+    const pointerFrame = await iframeOffset();
+    await page.mouse.move(pointerFrame.x+pointerWheelPoint.x,pointerFrame.y+pointerWheelPoint.y);
+    await page.mouse.down({button:"middle"});
+    await viewer.waitForSelector(".pdfToolWheelPointer");
+    const pointerPoint = await viewer.$eval(".pdfToolWheelPointer .pointerPad", el => {const r=el.getBoundingClientRect();return {x:r.left+r.width*.55,y:r.top+r.height*.75};});
+    await page.mouse.move(pointerFrame.x+pointerPoint.x,pointerFrame.y+pointerPoint.y);
+    await page.mouse.up({button:"middle"});
     await viewer.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 0);
     await viewer.evaluate(() => { PDFViewerApplication.pdfViewer.currentPageNumber = 2; });
     await viewer.waitForSelector('.page[data-page-number="2"] .textLayer span');
