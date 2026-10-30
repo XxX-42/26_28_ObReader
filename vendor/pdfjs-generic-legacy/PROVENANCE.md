@@ -141,3 +141,5 @@ The previous horizontal selection position remains a hover target for a second t
 The selection hover toolbar trigger is raised by half a measured text line.
 
 The middle-button wheel shifts inside the viewport to leave room for its color arc.
+
+Wheel captions omit shortcut numbers and use additional icon-to-label spacing.

@@ -8956,7 +8956,7 @@ dialog :link{
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: calc(2px * var(--tool-wheel-scale, 1));
+  gap: calc(2px * var(--tool-wheel-scale, 1) + 0.3em);
   background: transparent;
   color: inherit;
   border: 0;

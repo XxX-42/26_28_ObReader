@@ -26518,12 +26518,12 @@ function onBeforeUnload(evt) {
 // disabled. Once enabled, the wheel keeps the top LingQ exit sector and splits
 // the remaining arc into three disabled placeholders.
 const TOOL_WHEEL_ITEMS = [
-  { label: "LingQ 模式", icon: "L", action: "toggle-lingq", mode: null },
-  { label: "5 文字框", icon: "T", mode: AnnotationEditorType.FREETEXT },
-  { label: "4 自由画笔", icon: "✎", mode: AnnotationEditorType.INK },
-  { label: "3 荧光笔", icon: "▰", mode: AnnotationEditorType.HIGHLIGHT },
-  { label: "2 矩形框", icon: "□", mode: AnnotationEditorType.SQUARE },
-  { label: "1 下划线", icon: "U̲", mode: AnnotationEditorType.UNDERLINE },
+  { label: "LingQ", icon: "L", action: "toggle-lingq", mode: null },
+  { label: "文字框", icon: "T", mode: AnnotationEditorType.FREETEXT },
+  { label: "自由画笔", icon: "✎", mode: AnnotationEditorType.INK },
+  { label: "荧光笔", icon: "▰", mode: AnnotationEditorType.HIGHLIGHT },
+  { label: "矩形框", icon: "□", mode: AnnotationEditorType.SQUARE },
+  { label: "下划线", icon: "U̲", mode: AnnotationEditorType.UNDERLINE },
 ];
 function toolWheelItemsForState(vocabularyEnabled) {
   if (vocabularyEnabled) {
