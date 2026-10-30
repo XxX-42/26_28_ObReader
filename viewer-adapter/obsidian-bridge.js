@@ -2175,28 +2175,28 @@
     let visibleItems = [];
     let backgroundGeneration = 0;
     let backgroundPreparing = false;
+    let listNeedsRender = true;
     const backgroundFailedPages = new Set();
 
     async function prepareSidebarTextPages() {
-      if (!open || backgroundPreparing || !window.pdfjsLib?.TextLayer) return;
+      if (backgroundPreparing || !state.externalSourceConfirmed || !window.pdfjsLib?.TextLayer) return;
       const pdf = state.app?.pdfDocument;
       if (!pdf) return;
       const generation = backgroundGeneration;
       const guard = createSessionGuard();
       backgroundPreparing = true;
       try {
-        while (open && generation === backgroundGeneration && guard() && state.app?.pdfDocument === pdf) {
+        while (generation === backgroundGeneration && guard() && state.app?.pdfDocument === pdf) {
           const pageIndex = items.find((item) => {
             if (item.kind !== "Square" && item.kind !== "Highlight") return false;
             if (state.annotationSidebarOffscreenPages.has(item.pageIndex) || backgroundFailedPages.has(item.pageIndex)) return false;
-            const root = state.app?.pdfViewer?.getPageView?.(item.pageIndex)?.div;
-            return !textLayerForPage(root)?.querySelector?.("span");
+            return true;
           })?.pageIndex;
           if (!Number.isSafeInteger(pageIndex)) break;
           let root = null;
           try {
             const page = await pdf.getPage(pageIndex + 1);
-            if (!open || generation !== backgroundGeneration || !guard() || state.app?.pdfDocument !== pdf) break;
+            if (generation !== backgroundGeneration || !guard() || state.app?.pdfDocument !== pdf) break;
             const viewport = page.getViewport({ scale: 1 });
             root = document.createElement("div");
             root.style.cssText = `position:fixed;left:-100000px;top:0;width:${viewport.width}px;height:${viewport.height}px;visibility:hidden;pointer-events:none;--scale-factor:1;--total-scale-factor:1`;
@@ -2209,11 +2209,12 @@
               container: layer, viewport,
             });
             await textLayer.render();
-            if (!open || generation !== backgroundGeneration || !guard() || state.app?.pdfDocument !== pdf) break;
+            if (generation !== backgroundGeneration || !guard() || state.app?.pdfDocument !== pdf) break;
             const bounds = root.getBoundingClientRect();
             const glyphs = annotationSidebarTextGlyphs(layer, root, viewport);
             if (glyphs?.length) {
               state.annotationSidebarOffscreenPages.set(pageIndex, { viewport, bounds: { width: bounds.width, height: bounds.height }, glyphs });
+              listNeedsRender = true;
               scheduleRender({ reloadTargets: true });
             } else backgroundFailedPages.add(pageIndex);
           } catch (error) {
@@ -2223,7 +2224,7 @@
         }
       } finally {
         backgroundPreparing = false;
-        if (open && generation !== backgroundGeneration) void prepareSidebarTextPages();
+        if (generation !== backgroundGeneration && state.externalSourceConfirmed) void prepareSidebarTextPages();
       }
     }
     let selectionMode = false;
@@ -2395,6 +2396,7 @@
         fragment.append(row);
       }
       list.replaceChildren(fragment);
+      listNeedsRender = false;
       count.textContent = String(visibleItems.length);
       setSelected(selectedUuid);
       updateSelectionBar();
@@ -2419,17 +2421,15 @@
       open = true;
       menu.classList.remove("hidden");
       button.setAttribute("aria-expanded", "true");
-      scheduleRender({ reloadTargets: true });
+      if (listNeedsRender) scheduleRender({ reloadTargets: true });
       return true;
     }
 
     function close() {
       open = false;
-      backgroundGeneration++;
-      backgroundFailedPages.clear();
-      state.annotationSidebarOffscreenPages?.clear();
       closeContextMenu();
       selectionBar?.remove(); selectionBar = null;
+      if (selectionMode) listNeedsRender = true;
       selectionMode = false; checkedUuids.clear();
       if (refreshFrame !== null) cancelAnimationFrame(refreshFrame);
       refreshFrame = null;
@@ -2441,6 +2441,10 @@
 
     function closeAndClear() {
       close();
+      backgroundGeneration++;
+      backgroundFailedPages.clear();
+      state.annotationSidebarOffscreenPages?.clear();
+      listNeedsRender = true;
       selectedUuid = null;
       items = [];
       visibleItems = [];
@@ -2451,6 +2455,11 @@
     }
 
     function refreshIfOpen() {
+      listNeedsRender = true;
+      if (!open && state.externalSourceConfirmed && state.app?.pdfDocument) {
+        items = buildAnnotationSidebarViewModels(collectTargets());
+        void prepareSidebarTextPages();
+      }
       return scheduleRender({ reloadTargets: true });
     }
 
