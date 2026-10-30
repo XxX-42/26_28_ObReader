@@ -28,6 +28,14 @@ test("a character is marked only when at least 90 percent of its area is covered
   assert.deepEqual(Array.from(vertical.covered), []);
 });
 
+test("question marks inside quotes do not split a highlighted quotation", () => {
+  const text = '上一句。转变为：“你站着不动时我可以摸摸你吗？可以？按响片就赏你好吃的东西。”这是下一句。';
+  const glyphs = [...text].map((character, i) => ({character, rects:[{left:i*10,right:i*10+10,top:0,bottom:10}]}));
+  const from = text.indexOf("转变为"), to = text.indexOf("这是下一句");
+  const result = sentenceForRect(glyphs, {left:from*10,right:to*10,top:0,bottom:10});
+  assert.equal(result.text, '转变为：“你站着不动时我可以摸摸你吗？可以？按响片就赏你好吃的东西。”');
+});
+
 test("square colors and highlight quads share the same original sentence", () => {
   const groupStart = source.indexOf("  function groupSidebarSentenceBoxes(");
   const groupEnd = source.indexOf("\n  function buildAnnotationSidebarViewModels(", groupStart);

@@ -2028,11 +2028,22 @@
       })) covered.push(i);
     }
     if (!hits.length) return null;
-    const separator = /[。！？!?\n\r]/u;
-    let start = hits[0], end = hits.at(-1) + 1;
-    while (start > 0 && !separator.test(glyphs[start - 1].character)) start--;
-    while (end < glyphs.length && !separator.test(glyphs[end].character)) end++;
-    if (end < glyphs.length && /[。！？!?]/u.test(glyphs[end].character)) end++;
+    let start = 0, end = glyphs.length, quote = null;
+    const closes = { "“": "”", "‘": "’", "「": "」", "『": "』" };
+    const terminal = /[。！？!?]/u;
+    for (let i = 0; i < glyphs.length; i++) {
+      const ch = glyphs[i].character;
+      let boundary = false;
+      if (quote && ch === quote) {
+        quote = null;
+        boundary = i > 0 && terminal.test(glyphs[i - 1].character);
+      } else if (!quote && (closes[ch] || ch === '"')) {
+        quote = closes[ch] || ch;
+      } else if (!quote && (terminal.test(ch) || /[\n\r]/u.test(ch))) boundary = true;
+      if (!boundary) continue;
+      if (i < hits[0]) start = i + 1;
+      else if (i >= hits.at(-1)) { end = i + 1; break; }
+    }
     const text = glyphs.slice(start, end).map((g) => g.character).join("").replace(/\s+/gu, " ").trim();
     return text ? { start, end, text, covered, hits } : null;
   }
