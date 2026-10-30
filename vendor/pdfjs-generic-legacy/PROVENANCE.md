@@ -145,3 +145,5 @@ The middle-button wheel shifts inside the viewport to leave room for its color a
 Wheel captions omit shortcut numbers and use additional icon-to-label spacing.
 
 Wheel glyphs use solid forms and no caption shadows.
+
+Restore the original wheel glyphs; bridge renders the labels in solid white.

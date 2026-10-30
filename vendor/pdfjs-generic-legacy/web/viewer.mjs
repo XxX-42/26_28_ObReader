@@ -26520,9 +26520,9 @@ function onBeforeUnload(evt) {
 const TOOL_WHEEL_ITEMS = [
   { label: "LingQ", icon: "L", action: "toggle-lingq", mode: null },
   { label: "文字框", icon: "T", mode: AnnotationEditorType.FREETEXT },
-  { label: "自由画笔", icon: "✒", mode: AnnotationEditorType.INK },
+  { label: "自由画笔", icon: "✎", mode: AnnotationEditorType.INK },
   { label: "荧光笔", icon: "▰", mode: AnnotationEditorType.HIGHLIGHT },
-  { label: "矩形框", icon: "■", mode: AnnotationEditorType.SQUARE },
+  { label: "矩形框", icon: "□", mode: AnnotationEditorType.SQUARE },
   { label: "下划线", icon: "U̲", mode: AnnotationEditorType.UNDERLINE },
 ];
 function toolWheelItemsForState(vocabularyEnabled) {

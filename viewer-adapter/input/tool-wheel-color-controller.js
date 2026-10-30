@@ -103,7 +103,7 @@
         const color = key && this.getColor(key);
         const button = wheel.element.querySelector(`button[data-sector="${index}"]`);
         if (!button || !color || item.disabled) return;
-        button.style.color = color;
+        button.style.color = "#ffffff";
 
       });
     }
