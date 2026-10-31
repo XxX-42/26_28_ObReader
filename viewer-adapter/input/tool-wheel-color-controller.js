@@ -160,6 +160,16 @@
         p.x + half + 6 < pointerBounds.left || p.x - half - 6 > pointerBounds.right ||
         p.y + half + 6 < pointerBounds.top || p.y - half - 6 > pointerBounds.bottom;
       let positions = null;
+      // Prefer staying beside the selected tool: move the arc outward before
+      // rotating it away to an unrelated sector to avoid the pointer shortcut.
+      for (let radius = wheel.radius + half + 14; radius <= wheel.radius + half + 104 && !positions; radius += 2) {
+        const spacing = Math.max(0.28, 2 * Math.asin(Math.min(1, (diameter + 2) / (2 * radius))));
+        const points = colors.map((_, i) => {
+          const theta = preferred + (i - 2) * spacing;
+          return { x: wheel.x + radius * Math.cos(theta), y: wheel.y + radius * Math.sin(theta) };
+        });
+        if (points.every(p => p.x >= half && p.y >= half && p.x <= this.host.innerWidth - half && p.y <= this.host.innerHeight - half && clearsPointer(p))) positions = points;
+      }
       for (let radius = wheel.radius + half + 14; radius >= 0 && !positions; radius -= 2) {
         for (let step = 0; step <= 180 && !positions; step++) {
           for (const direction of step ? [1, -1] : [1]) {
