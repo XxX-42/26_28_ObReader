@@ -58,7 +58,27 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
   if (typeof registry?.embedByExtension?.pdf !== 'function' || typeof Component !== 'function') return null;
   const original = registry.embedByExtension.pdf;
   const components = new Set(), cache = new Map();
+  const resolving = new Map(), resolvedTargets = new Map();
+  let resolutionGeneration = 0;
   let disposed = false, queue = Promise.resolve(), cachedBytes = 0;
+  function resolveShared(parsed, file, sourcePath) {
+    const key = JSON.stringify([resolutionGeneration, file.path, sourcePath, parsed]);
+    if (resolvedTargets.has(key)) return Promise.resolve(resolvedTargets.get(key));
+    let pending = resolving.get(key);
+    if (!pending) {
+      const generation = resolutionGeneration;
+      pending = Promise.resolve().then(() => resolveTarget(parsed, file, sourcePath)).then(target => {
+        if (!disposed && generation === resolutionGeneration) {
+          resolvedTargets.set(key, target);
+          while (resolvedTargets.size > 64) resolvedTargets.delete(resolvedTargets.keys().next().value);
+        }
+        return target;
+      });
+      resolving.set(key, pending);
+      void pending.finally(() => { if (resolving.get(key) === pending) resolving.delete(key); }).catch(() => {});
+    }
+    return pending;
+  }
   const enqueue = fn => {
     const result = queue.then(() => { if (disposed) throw new Error('阅读器已关闭。'); return fn(); });
     queue = result.catch(() => {}); return result;
@@ -111,7 +131,7 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
       const current = () => !disposed && !this.disposed && generation === this.generation && !signal.aborted;
       this.showMessage('正在加载矩形区域…');
       try {
-        const target = await resolveTarget(this.parsed, this.file, this.context.sourcePath || '');
+        const target = await resolveShared(this.parsed, this.file, this.context.sourcePath || '');
         if (!current()) return;
         const region = squareRegion(target.row);
         if (!region) {
@@ -179,11 +199,11 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
   };
   registry.embedByExtension.pdf = wrapper;
   return {
-    invalidate(path) { for (const component of components) component.invalidate(path); },
+    invalidate(path) { ++resolutionGeneration; resolvedTargets.clear(); for (const component of components) component.invalidate(path); },
     dispose() {
       disposed = true;
       if (registry.embedByExtension.pdf === wrapper) registry.embedByExtension.pdf = original;
-      for (const component of [...components]) component.unload(); cache.clear(); cachedBytes = 0;
+      for (const component of [...components]) component.unload(); cache.clear(); resolving.clear(); resolvedTargets.clear(); cachedBytes = 0;
     },
     get size() { return components.size; },
   };

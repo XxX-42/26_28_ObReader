@@ -63,10 +63,10 @@ test('real PDF.js region images exclude native annotations, rotate correctly, re
       const registry={embedByExtension:{pdf:original}};
       const file={path:'Books/A.pdf',basename:'A'};
       const row={uuid:'rect-uuid',kind:'Square',pageIndex:0,payload:{editor:{rect:[100,100,200,200]}}};
-      window.regionTest={file,row,registry,original,opened:[],renders:0,deleted:false};
+      window.regionTest={file,row,registry,original,opened:[],renders:0,resolutions:0,deleted:false};
       const plugin={app:{embedRegistry:registry},openPdf:async(f,target)=>{regionTest.opened.push({path:f.path,target});}};
       regionTest.runtime=RectangleModule.createRectangleEmbeds({plugin,Component,
-        resolveTarget:async()=>{if(regionTest.deleted)throw Error('矩形目标已删除');return {file:regionTest.file,document:{documentId:'D'},row,sourceHash:'verified',readerTarget:{kind:'annotation',id:row.uuid},annotationPath:'annotations/A.jsonl'};},
+        resolveTarget:async()=>{regionTest.resolutions++;if(regionTest.deleted)throw Error('矩形目标已删除');return {file:regionTest.file,document:{documentId:'D'},row,sourceHash:'verified',readerTarget:{kind:'annotation',id:row.uuid},annotationPath:'annotations/A.jsonl'};},
         acquireDocument:async()=>{regionTest.renders++;return {document:fixtureDocument,release(){}};}});
       regionTest.context={containerEl:document.getElementById('embed'),sourcePath:'Note.md'};
       regionTest.component=registry.embedByExtension.pdf(regionTest.context,file,'#page=1&obreader=ann.rect-uuid');
@@ -74,6 +74,15 @@ test('real PDF.js region images exclude native annotations, rotate correctly, re
       regionTest.getOriginalCalls=()=>originalCalls;
     });
     await page.waitForSelector('#embed img');
+    const beforeSecond = await page.evaluate(()=>regionTest.resolutions);
+    await page.evaluate(() => { const el=document.createElement('div');el.id='embed2';document.body.append(el);
+      regionTest.component2=regionTest.registry.embedByExtension.pdf({containerEl:el,sourcePath:'Note.md'},regionTest.file,'#page=1&obreader=ann.rect-uuid');regionTest.component2.load(); });
+    await page.waitForSelector('#embed2 img');
+    assert.equal(await page.evaluate(()=>regionTest.resolutions),beforeSecond,'reopened identical embed reuses verified target until invalidation');
+    const beforeShared = await page.evaluate(()=>regionTest.resolutions);
+    await page.evaluate(()=>regionTest.runtime.invalidate('annotations/A.jsonl'));
+    await page.waitForFunction((before)=>regionTest.resolutions>before && !!document.querySelector('#embed img') && !!document.querySelector('#embed2 img'),{},beforeShared);
+    assert.equal(await page.evaluate((before)=>regionTest.resolutions-before,beforeShared),1,'identical concurrent embeds share target resolution');
     const readPixel=()=>page.evaluate(async()=>{const image=document.querySelector('#embed img');await image.decode();const canvas=document.createElement('canvas');canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;const ctx=canvas.getContext('2d');ctx.drawImage(image,0,0);return [...ctx.getImageData(50,50,1,1).data];});
     assert.deepEqual(await readPixel(),[0,255,0,255]);
     await page.click('#embed img');

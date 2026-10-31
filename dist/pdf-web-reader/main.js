@@ -505,7 +505,30 @@ var __PDFReaderRectangleEmbed = (() => {
         if (typeof registry?.embedByExtension?.pdf !== "function" || typeof Component !== "function") return null;
         const original = registry.embedByExtension.pdf;
         const components = /* @__PURE__ */ new Set(), cache = /* @__PURE__ */ new Map();
+        const resolving = /* @__PURE__ */ new Map(), resolvedTargets = /* @__PURE__ */ new Map();
+        let resolutionGeneration = 0;
         let disposed = false, queue = Promise.resolve(), cachedBytes = 0;
+        function resolveShared(parsed, file, sourcePath) {
+          const key = JSON.stringify([resolutionGeneration, file.path, sourcePath, parsed]);
+          if (resolvedTargets.has(key)) return Promise.resolve(resolvedTargets.get(key));
+          let pending = resolving.get(key);
+          if (!pending) {
+            const generation = resolutionGeneration;
+            pending = Promise.resolve().then(() => resolveTarget(parsed, file, sourcePath)).then((target) => {
+              if (!disposed && generation === resolutionGeneration) {
+                resolvedTargets.set(key, target);
+                while (resolvedTargets.size > 64) resolvedTargets.delete(resolvedTargets.keys().next().value);
+              }
+              return target;
+            });
+            resolving.set(key, pending);
+            void pending.finally(() => {
+              if (resolving.get(key) === pending) resolving.delete(key);
+            }).catch(() => {
+            });
+          }
+          return pending;
+        }
         const enqueue = (fn) => {
           const result = queue.then(() => {
             if (disposed) throw new Error("\u9605\u8BFB\u5668\u5DF2\u5173\u95ED\u3002");
@@ -579,7 +602,7 @@ var __PDFReaderRectangleEmbed = (() => {
             const current = () => !disposed && !this.disposed && generation === this.generation && !signal.aborted;
             this.showMessage("\u6B63\u5728\u52A0\u8F7D\u77E9\u5F62\u533A\u57DF\u2026");
             try {
-              const target = await resolveTarget(this.parsed, this.file, this.context.sourcePath || "");
+              const target = await resolveShared(this.parsed, this.file, this.context.sourcePath || "");
               if (!current()) return;
               const region = squareRegion(target.row);
               if (!region) {
@@ -677,6 +700,8 @@ var __PDFReaderRectangleEmbed = (() => {
         registry.embedByExtension.pdf = wrapper;
         return {
           invalidate(path) {
+            ++resolutionGeneration;
+            resolvedTargets.clear();
             for (const component of components) component.invalidate(path);
           },
           dispose() {
@@ -684,6 +709,8 @@ var __PDFReaderRectangleEmbed = (() => {
             if (registry.embedByExtension.pdf === wrapper) registry.embedByExtension.pdf = original;
             for (const component of [...components]) component.unload();
             cache.clear();
+            resolving.clear();
+            resolvedTargets.clear();
             cachedBytes = 0;
           },
           get size() {

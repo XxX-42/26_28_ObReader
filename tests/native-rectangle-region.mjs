@@ -72,6 +72,14 @@ try {
   await wait(`return !!document.querySelector('.pdfReaderRectangleEmbed img');`,'real Markdown embed');
   report.embed=await evaluate(`const img=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(img=>img.getBoundingClientRect().width>0);await img.decode();return {width:img.naturalWidth,height:img.naturalHeight,alt:img.alt};`);
   assert.ok(report.embed.width>0&&report.embed.height>0);
+  report.warmReopenMs=[];
+  for(let i=0;i<5;i++) {
+    await evaluate(`const r=app.__regionNative;await r.mdLeaf.setViewState({type:'markdown',state:{file:r.notePath,mode:'source',source:true}});return true;`);
+    report.warmReopenMs.push(await evaluate(`const r=app.__regionNative,t=performance.now();let done=false;
+      const ready=new Promise((resolve,reject)=>{const timer=setTimeout(()=>{observer.disconnect();reject(Error('embed timing timeout'))},10000);
+        const observer=new MutationObserver(()=>{if(done)return;const img=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(x=>x.getBoundingClientRect().width>0);if(!img)return;done=true;img.decode().then(()=>{clearTimeout(timer);observer.disconnect();resolve(performance.now()-t)},reject)});observer.observe(document.body,{childList:true,subtree:true});});
+      await r.mdLeaf.setViewState({type:'markdown',state:{file:r.notePath,mode:'preview'}});return await ready;`));
+  }
   const shot=nativeCdp('Page.captureScreenshot',{format:'png'});await writeFile(path.join(output,'markdown-embed.png'),Buffer.from(shot.data,'base64'));
   report.readingMode=await evaluate(`const r=app.__regionNative;await r.mdLeaf.setViewState({type:'markdown',state:{file:r.notePath,mode:'preview'}});return r.mdLeaf.view.getMode();`);
   await wait(`return [...document.querySelectorAll('.pdfReaderRectangleEmbed img')].some(img=>img.getBoundingClientRect().width>0&&img.naturalWidth>0);`,'reading view image');
