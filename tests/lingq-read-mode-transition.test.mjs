@@ -87,6 +87,7 @@ function makeBridgeHarness({ mobile = false } = {}) {
       iosDirectManipulationController: null,
       inputPolicy: { handlePanClick: () => false },
       editorMode: 15,
+      autoCopySequence: 0,
       preferredAnnotationToolMode: 15,
       restoredAnnotationToolIdentity: null,
       readOnly: false,
@@ -132,6 +133,7 @@ function makeBridgeHarness({ mobile = false } = {}) {
     function setPenPolicyPointers(value) { penPolicyPointers = value; }
     function setMobileInputBusy(value) { mobileInputBusy = value; }
     function ensureVocabularyController() { return state.vocabularyController; }
+    function postToHost(type, payload) { calls.push({ type, payload }); }
     function cancelManualMomentum() { calls.push({ type: "cancel-motion" }); }
     function invalidatePendingPenHighlight() { calls.push({ type: "cancel-selection" }); }
     function dismissToolbarParameterPopups() { calls.push({ type: "dismiss-params" }); }
@@ -256,7 +258,9 @@ test("badge ownership retains the established pointerdown motion, selection and 
   } };
   api.onBridgePointerDown({ type: "pointerdown", pointerType: "mouse" }, {});
   assert.deepEqual(Array.from(api.calls, call => call.type),
-    ["cancel-motion", "cancel-selection", "dismiss-params", "badge-owner"]);
+    ["reader-auto-copy-cancel", "cancel-motion", "cancel-selection", "dismiss-params", "badge-owner"]);
+  assert.equal(api.calls[0].payload.sequence, 1);
+  assert.equal(api.calls[0].payload.documentId, "doc-a");
 });
 
 test("an Ink gesture defers READ until its safe boundary, including on mobile", () => {

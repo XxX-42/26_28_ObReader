@@ -165,7 +165,7 @@
       ) || null;
       const kind = element?.dataset?.backlinkTargetKind;
       const id = element?.dataset?.backlinkTargetId;
-      if ((kind === "annotation" || kind === "page") && typeof id === "string" && id) {
+      if ((kind === "annotation" || kind === "page" || kind === "selection") && typeof id === "string" && id) {
         return { kind, id };
       }
 

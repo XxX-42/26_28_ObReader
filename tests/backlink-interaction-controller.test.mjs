@@ -83,6 +83,17 @@ test("single selection-backlink click resolves the current Range and posts only 
   h.controller.dispose();
 });
 
+test("selection chain badge reuses exact target navigation outside text geometry", () => {
+  const h = harness();
+  const badge = { dataset: { backlinkTargetKind: "selection", backlinkTargetId: "anchor-1" } };
+  h.dispatch("click", click({ target: { closest: () => badge }, x: -1, y: -1 }));
+  h.advanceTimers();
+  assert.equal(h.posted.length, 1);
+  assert.equal(h.posted[0].targetKind, "selection");
+  assert.equal(h.posted[0].targetId, "anchor-1");
+  h.controller.dispose();
+});
+
 test("double-click cancels the pending single-click and opens exactly once", () => {
   const h = harness();
   h.dispatch("click", click({ detail: 1 }));

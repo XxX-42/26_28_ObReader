@@ -141,13 +141,11 @@ body {
   pointer-events: auto;
 }
 
-/* Markdown backlinks use a dotted underline so they stay visually distinct
-   from LingQ's fill and PDF.js's native annotation appearance. */
+/* References use the ordinary yellow highlighter appearance. This remains a
+   read-only consumer of the backlink index, not an additional editor tool. */
 ::highlight(pdfReaderMarkdownBacklinks) {
-  text-decoration-line: underline;
-  text-decoration-style: dotted;
-  text-decoration-color: var(--interactive-accent, #6957d5);
-  text-decoration-thickness: 2px;
+  background-color: rgb(255 235 59 / 45%);
+  color: inherit;
 }
 
 /* A short-lived navigation focus is separate from the document selection and
@@ -228,6 +226,15 @@ body {
   white-space: nowrap;
   cursor: pointer;
   pointer-events: auto;
+}
+
+.pdfReaderSelectionBacklinkBadge {
+  inset-inline-end: auto;
+  transform: translate(-100%, -90%);
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
 }
 
 .pdfReaderVocabularyPillHeading {

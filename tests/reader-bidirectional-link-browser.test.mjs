@@ -524,6 +524,16 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
       "the exact restored selection range must receive the Viewer temporary focus highlight");
     await refreshPage();
     await frame.waitForFunction(() => Boolean(window.CSS?.highlights?.get("pdfReaderMarkdownBacklinks")), { timeout: 8_000 });
+    const selectionBadge = await frame.evaluate((id) => {
+      const badge = document.querySelector(`.pdfReaderSelectionBacklinkBadge[data-backlink-target-id="${id}"]`);
+      if (!badge) return null;
+      const rect = badge.getBoundingClientRect();
+      return { text: badge.textContent, kind: badge.dataset.backlinkTargetKind, width: rect.width, height: rect.height };
+    }, anchor.anchorId);
+    assert.ok(selectionBadge, "referenced selection has its chain badge");
+    assert.equal(selectionBadge.text, "🔗");
+    assert.equal(selectionBadge.kind, "selection");
+    assert.ok(selectionBadge.width > 0 && selectionBadge.height > 0);
     const selectionPoint = await frame.evaluate(() => {
       const ranges = [...(window.CSS.highlights.get("pdfReaderMarkdownBacklinks") || [])];
       const target = ranges.find((range) => range.toString().startsWith("Dynamic languages"));

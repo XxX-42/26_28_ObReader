@@ -625,7 +625,7 @@
   }
 
   function autoCopySelectedLinks() {
-    if (!state.autoCopySelectionLinks || state.readOnly || state.vocabularyEnabled || state.editorMode !== 0) return;
+    if (state.disposed || !state.autoCopySelectionLinks || state.readOnly || state.vocabularyEnabled || state.editorMode !== 0) return;
     try {
       const actual=state.actualSourceIdentity;
       const captures=state.textSelectionController.captureSelectedPages().map(({pageRoot,anchor})=>{
@@ -1039,6 +1039,23 @@
         paintedRanges = ranges.length;
       } catch { /* The page badge remains a safe visual fallback. */ }
     }
+    const pageRect = rangeTargets.length ? pageRoot.getBoundingClientRect() : null;
+    for (const target of rangeTargets) {
+      const rect = target.range.getBoundingClientRect();
+      if (!pageRect?.width || !pageRect.height || !rect.width || !rect.height) continue;
+      const badge = document.createElement("span");
+      badge.className = "pdfReaderAnnotationBacklinkBadge pdfReaderSelectionBacklinkBadge";
+      badge.dataset.backlinkTargetKind = "selection";
+      badge.dataset.backlinkTargetId = target.id;
+      badge.setAttribute("role", "button");
+      badge.setAttribute("tabindex", "0");
+      badge.textContent = "🔗";
+      badge.title = "Markdown 引用；点击定位来源";
+      badge.setAttribute("aria-label", badge.title);
+      badge.style.left = `${100 * (rect.right - pageRect.left) / pageRect.width}%`;
+      badge.style.top = `${100 * (rect.top - pageRect.top) / pageRect.height}%`;
+      pageRoot.appendChild(badge);
+    }
     const manager = state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
     for (const marker of markers) {
       if (marker?.kind !== "annotation" || typeof marker.id !== "string") continue;
@@ -1055,7 +1072,7 @@
         badge.setAttribute("role", "button");
         badge.setAttribute("tabindex", "0");
         const count = Number.isSafeInteger(marker.backlinkCount) ? marker.backlinkCount : 1;
-        badge.textContent = count > 1 ? `↗${count}` : "↗";
+        badge.textContent = count > 1 ? `🔗${count}` : "🔗";
         badge.title = count === 1
           ? "1 条 Markdown 反向链接；点击定位（Ctrl/Cmd 悬停预览不可用）"
           : `${count} 条 Markdown 反向链接；点击查看来源（Ctrl/Cmd 悬停预览不可用）`;
@@ -9923,6 +9940,11 @@
   function onBridgePointerDown(intent, controls) {
     state.autoCopySignature=null;
     postToHost('reader-auto-copy-cancel',{documentId:state.activeDocumentId,openRequest:state.activeOpenRequest,sequence:++state.autoCopySequence});
+    state.autoCopyPointer = intent.pointerType === "mouse" && intent.button === 0 &&
+      intent.targetRole === "text-layer" && state.editorMode === 0
+      ? { id: intent.pointerId, documentId: state.activeDocumentId,
+        openRequest: state.activeOpenRequest, sequence: state.autoCopySequence }
+      : null;
     cancelManualMomentum();
     invalidatePendingPenHighlight();
     dismissToolbarParameterPopups(intent);
@@ -10241,6 +10263,15 @@
   }
 
   function onBridgePointerEnd(intent, controls) {
+    const autoPointer = state.autoCopyPointer;
+    if (autoPointer?.id === intent.pointerId) {
+      state.autoCopyPointer = null;
+      if (intent.type !== "pointercancel") setDeferredTimeout(() => {
+        if (autoPointer.documentId === state.activeDocumentId &&
+            autoPointer.openRequest === state.activeOpenRequest &&
+            autoPointer.sequence === state.autoCopySequence) autoCopySelectedLinks();
+      }, 0);
+    }
     if (state.iosDirectManipulationController?.handlePointerEnd(intent, controls)) return;
     deletePenPolicyPointer(intent.pointerId);
     runAnnotationObserver("pointer.touch-action-end", () => state.inputPolicy?.refreshPenGestureTouchAction?.());
