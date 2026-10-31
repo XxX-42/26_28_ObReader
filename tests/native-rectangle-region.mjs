@@ -74,12 +74,19 @@ try {
     r.firstProfile=[];r.restoreProfile=[];
     const wrap=(obj,key)=>{const original=obj[key];obj[key]=async function(...args){const start=performance.now();try{return await original.apply(this,args)}finally{r.firstProfile.push({stage:key,ms:performance.now()-start})}};r.restoreProfile.push(()=>obj[key]=original);};
     wrap(p,'resolveRectangleEmbedTarget');wrap(p.rectangleDocumentPool,'acquire');wrap(r.host.store,'readDocument');wrap(app.vault,'readBinary');
+    const doc=r.view.iframe.contentWindow.PDFViewerApplication.pdfDocument,originalGetPage=doc.getPage;
+    doc.getPage=async function(...args){const start=performance.now(),page=await originalGetPage.apply(this,args);r.firstProfile.push({stage:'getPage',ms:performance.now()-start});
+      const originalRender=page.render;page.render=function(...renderArgs){const start=performance.now(),task=originalRender.apply(this,renderArgs);task.promise.finally(()=>r.firstProfile.push({stage:'pageRender',ms:performance.now()-start})).catch(()=>{});return task};
+      r.restoreProfile.push(()=>page.render=originalRender);return page};r.restoreProfile.push(()=>doc.getPage=originalGetPage);
+    const canvasProto=r.view.iframe.contentWindow.HTMLCanvasElement.prototype,originalBlob=canvasProto.toBlob;
+    canvasProto.toBlob=function(callback,...args){const start=performance.now();return originalBlob.call(this,blob=>{r.firstProfile.push({stage:'canvasToBlob',ms:performance.now()-start});callback(blob)},...args)};
+    r.restoreProfile.push(()=>canvasProto.toBlob=originalBlob);
     r.firstEmbedStart=performance.now();r.firstEmbedTiming=new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>{observer.disconnect();reject(Error('first embed timing timeout'))},15000);
       const observer=new MutationObserver(()=>{const img=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(x=>x.getBoundingClientRect().width>0);if(!img)return;
         observer.disconnect();img.decode().then(()=>{clearTimeout(timer);resolve(performance.now()-r.firstEmbedStart)},reject)});
       observer.observe(document.body,{childList:true,subtree:true});});
-    const leaf=app.workspace.getLeaf(true);await leaf.openFile(app.vault.getAbstractFileByPath(r.notePath));r.mdLeaf=leaf;
+    const leaf=app.workspace.getLeaf(true),mountStart=performance.now();await leaf.openFile(app.vault.getAbstractFileByPath(r.notePath));r.firstProfile.push({stage:'openMarkdown',ms:performance.now()-mountStart});r.mdLeaf=leaf;
     return {annotations:state.annotations,pairId:r.view.annotationDocument.pairId,sha:r.pairedSha,xxh:r.pairedXxh,saveCalls:r.saveCalls};`);
   assert.equal(report.saved.annotations.length,1);assert.equal(report.saved.annotations[0].kind,'Square');assert.equal(report.saved.saveCalls,0);
   await wait(`return !!document.querySelector('.pdfReaderRectangleEmbed img');`,'real Markdown embed');
