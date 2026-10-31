@@ -91,13 +91,13 @@ test('saved rectangle capture survives the live editor being replaced by hydrati
     {capture:{kind:'annotation',annotationUuid:'stable-uuid',pageIndex:1,pageNumber:2,pageIdentity:'second-page',sourceHash:'verified'}});
   assert.match(capture('annotation',{annotationUuid:'stable-uuid',pageIndex:5}).error,/身份/);
 });
-const finishSource = bridge.slice(bridge.indexOf('  function styleRectangleSnapshot('),bridge.indexOf('  function armRectangleRegion(')) + bridge.slice(bridge.indexOf('  async function finishRectangleRegion('),bridge.indexOf('  function installBridgeControls()'));
+const finishSource = bridge.slice(bridge.indexOf('  function styleRectangleSnapshot('),bridge.indexOf('  function installBridgeControls()'));
 function regionHarness(save) {
   const pdfDocument={}, events=[], messages=[], status=[];
   const pending={documentId:'doc',openRequest:1,pdfDocument,editor:{id:'runtime',pageIndex:3,_drawId:4,parent:{drawLayer:{updateProperties:(id,properties)=>events.push(['draw',properties])}}},finishing:false};
-  const state={rectangleRegion:pending,activeDocumentId:'doc',activeOpenRequest:1,autoCopySequence:7,
+  const state={externalSourceConfirmed:true,rectangleRegion:pending,activeDocumentId:'doc',activeOpenRequest:1,autoCopySequence:7,
     app:{pdfDocument,eventBus:{dispatch:(...args)=>events.push(args)}},annotationUuidByRuntimeId:new Map([['runtime','stable-uuid']])};
-  const finish=new Function('state','requestSave','postToHost','showStatus','makeSyncUuid','window',`${finishSource};return finishRectangleRegion`)(state,save,(...args)=>messages.push(args),value=>status.push(value),()=> 'capture-id',{});
+  const finish=new Function('state','requestSave','postToHost','showStatus','makeSyncUuid','window','syncBridgeControls',`${finishSource};return finishRectangleRegion`)(state,save,(...args)=>messages.push(args),value=>status.push(value),()=> 'capture-id',{},()=>{});
   return {state,pending,events,messages,status,finish};
 }
 test('one-shot region capture waits for saved ACK and never copies on failed saves', async () => {
@@ -114,4 +114,23 @@ test('new pointer input and replaced documents cancel a region awaiting save', a
     let release;const h=regionHarness(()=>new Promise(resolve=>{release=resolve}));
     const finishing=h.finish();change(h);release(true);await finishing;assert.deepEqual(h.messages,[]);
   }
+});
+
+test('locked snapshot rearms after save, while failed saves and document replacement never rearm',async()=>{
+ const h=regionHarness(async()=>true);h.state.toolLocked=true;await h.finish();
+ assert.notEqual(h.state.rectangleRegion,h.pending);assert.equal(h.state.rectangleRegion.editor,null);assert.equal(h.events.at(-1)[1].mode,5);
+ const failed=regionHarness(async()=>false);failed.state.toolLocked=true;await failed.finish();assert.equal(failed.state.rectangleRegion,null);
+ let release;const stale=regionHarness(()=>new Promise(r=>release=r));stale.state.toolLocked=true;const job=stale.finish();stale.state.activeOpenRequest++;release(true);await job;assert.equal(stale.state.rectangleRegion,null);
+});
+
+test('top snapshot button reflects its armed state independently from ordinary Square', () => {
+  const attrs = {}, classes = new Set();
+  const button = { setAttribute: (k,v) => attrs[k]=v, classList: { toggle(k,v) { if(v) classes.add(k); else classes.delete(k); } } };
+  const state = { readOnly:false, externalSourceConfirmed:true, rectangleRegion:null };
+  const source = bridge.slice(bridge.indexOf('  function syncBridgeControls()'),bridge.indexOf('  function toolbarContentWidth('));
+  const sync = new Function('state','document',`${source};return syncBridgeControls`)(state,{getElementById:()=>button});
+  sync();assert.equal(attrs['aria-pressed'],'false');assert.equal(classes.has('toggled'),false);
+  state.rectangleRegion={finishing:false};sync();assert.equal(attrs['aria-pressed'],'true');assert.equal(classes.has('toggled'),true);
+  state.rectangleRegion=null;sync();assert.equal(attrs['aria-pressed'],'false');assert.equal(classes.has('toggled'),false);
+  state.readOnly=true;sync();assert.equal(button.disabled,true);
 });

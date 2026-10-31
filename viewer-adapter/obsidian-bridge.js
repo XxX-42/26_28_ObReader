@@ -104,6 +104,7 @@
     requestedOpenRequest: null,
     requestedDocumentId: null,
     pendingVocabularySettings: null,
+    toolLocked: false,
     readOnly: false,
     encryptedPdf: false,
     autoSaveEnabled: true,
@@ -1857,7 +1858,12 @@
 
   function syncBridgeControls() {
     const regionButton = document.getElementById("pdfReaderRectangleRegionButton");
-    if (regionButton) regionButton.disabled = state.readOnly || !state.externalSourceConfirmed;
+    if (regionButton) {
+      regionButton.disabled = state.readOnly || !state.externalSourceConfirmed;
+      const selected = !!state.rectangleRegion;
+      regionButton.setAttribute("aria-pressed", String(selected));
+      regionButton.classList.toggle("toggled", selected);
+    }
     const controls = state.bridgeControls;
     if (!controls) {
       return;
@@ -3383,6 +3389,7 @@
     state.rectangleRegion = { documentId: state.activeDocumentId, openRequest: state.activeOpenRequest,
       pdfDocument: state.app.pdfDocument, editor: null, finishing: false };
     state.app.eventBus.dispatch("switchannotationeditormode", { source: window, mode: 5, createNewEditor: false });
+    syncBridgeControls();
   }
 
   async function finishRectangleRegion(cancel = false) {
@@ -3392,11 +3399,12 @@
       state.activeDocumentId === pending.documentId && state.activeOpenRequest === pending.openRequest &&
       state.app?.pdfDocument === pending.pdfDocument &&
       (!pending.finishing || pending.copySequence === state.autoCopySequence);
-    if (!current()) { state.rectangleRegion = null; return; }
-    if (cancel) { state.rectangleRegion = null; return; }
+    if (!current()) { state.rectangleRegion = null; syncBridgeControls(); return; }
+    if (cancel) { state.rectangleRegion = null; syncBridgeControls(); return; }
     if (!pending.editor) return;
     pending.copySequence = state.autoCopySequence;
     pending.finishing = true;
+    let repeat = false;
     try {
       // Native Square already committed at the existing pointer boundary.
       // Returning to arrow must not create another drawing session.
@@ -3410,8 +3418,16 @@
       postToHost("reader-anchor-occurrence-link-request", { requestId: makeSyncUuid(),
         documentId: pending.documentId, openRequest: pending.openRequest,
         output: "region-embed", annotationUuid: uuid, pageIndex: pending.editor.pageIndex });
+      repeat = true;
     } catch (error) { if (current()) showStatus(`区域链接未复制：${error.message || error}`); }
-    finally { if (state.rectangleRegion === pending) state.rectangleRegion = null; }
+    finally {
+      if (state.rectangleRegion === pending) {
+        const rearm = repeat && current() && state.toolLocked && !state.readOnly;
+        state.rectangleRegion = null;
+        if (rearm) armRectangleRegion();
+        else syncBridgeControls();
+      }
+    }
   }
 
   function installBridgeControls() {
@@ -3427,6 +3443,14 @@
       return;
     }
     hideUnusedToolbarControls();
+    const lockButton = document.createElement('button');
+    lockButton.id = 'pdfReaderToolLockButton'; lockButton.type = 'button'; lockButton.className = 'toolbarButton labeled';
+    const lockLabel = document.createElement('span');
+    const syncLock = () => { lockLabel.textContent = state.toolLocked ? '🔒 工具已锁定' : '🔓 锁定工具'; lockButton.setAttribute('aria-pressed',String(state.toolLocked)); };
+    lockButton.append(lockLabel); syncLock();
+    lockButton.title = '锁定后可连续使用当前工具；再次点击取消锁定';
+    lockButton.addEventListener('click', () => { state.toolLocked = !state.toolLocked; syncLock(); });
+    secondaryContainer.insertBefore(lockButton, saveButton);
     const regionButton = document.createElement("button");
     regionButton.id = "pdfReaderRectangleRegionButton";
     regionButton.type = "button";

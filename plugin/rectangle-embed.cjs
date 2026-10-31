@@ -168,7 +168,12 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
     showMessage(message) {
       this.containerEl.replaceChildren();
       const text = this.containerEl.ownerDocument.createElement('span');
-      text.className = 'pdfReaderRectangleEmbedStatus'; text.textContent = message; this.containerEl.append(text);
+      text.className = 'pdfReaderRectangleEmbedStatus';
+      const loading = message === '正在加载矩形区域…';
+      this.containerEl.setAttribute('aria-busy', String(loading));
+      text.textContent = loading ? '' : message;
+      if (loading) { text.style.cssText = 'display:block;min-height:1em'; text.setAttribute('aria-label','正在加载区域'); }
+      this.containerEl.append(text);
     }
     async refresh({ checkUnchanged = false } = {}) {
       if (disposed || this.disposed || this.fallback || !this.visible) return;
@@ -210,6 +215,7 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
         };
         image.addEventListener('click', open); image.addEventListener('keydown', open);
         this.renderedImageKey = imageKey(target, region, this.containerEl.ownerDocument);
+        this.containerEl.setAttribute('aria-busy', 'false');
         this.containerEl.replaceChildren(image);
       } catch (error) {
         if (current()) this.showMessage(`区域不可用：${error.message || error}`);
