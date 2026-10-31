@@ -49,11 +49,13 @@ test('real PDF.js region images exclude native annotations, rotate correctly, re
       const colors=[];
       for(let n=1;n<=4;n++) {
         const p=await pdf.getPage(n);
-        const viewport=p.getViewport({scale:1}),base=document.createElement('canvas');base.width=viewport.width;base.height=viewport.height;
+        const viewport=p.getViewport({scale:3}),base=document.createElement('canvas');base.width=viewport.width;base.height=viewport.height;
         await p.render({canvasContext:base.getContext('2d'),viewport,annotationMode:0}).promise;
         const rendered={canvas:base,viewport,current:()=>true};
         if(await RectangleModule.cropRenderedPage(p,[100,100,200,200],rendered,{document}))throw Error('embedded annotation canvas must be rejected');
         const sourceOnlyPage=new Proxy(p,{get(target,key){if(key==='getAnnotations')return async()=>[];const value=target[key];return typeof value==='function'?value.bind(target):value;}});
+        const lowViewport=p.getViewport({scale:1}),low=document.createElement('canvas');low.width=lowViewport.width;low.height=lowViewport.height;
+        if(await RectangleModule.cropRenderedPage(sourceOnlyPage,[100,100,200,200],{canvas:low,viewport:lowViewport,current:()=>true},{document}))throw Error('lower-resolution canvas must not be upscaled');
         const fast=await RectangleModule.cropRenderedPage(sourceOnlyPage,[100,100,200,200],rendered,{document});
         const fastBitmap=await createImageBitmap(fast.blob),check=document.createElement('canvas');check.width=fastBitmap.width;check.height=fastBitmap.height;
         check.getContext('2d').drawImage(fastBitmap,0,0);

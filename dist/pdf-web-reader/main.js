@@ -519,7 +519,7 @@ var __PDFReaderRectangleEmbed = (() => {
         let viewport = page.getViewport({ scale: 1 });
         const unit = viewport.convertToViewportRectangle(bounded);
         const width = Math.abs(unit[2] - unit[0]), height = Math.abs(unit[3] - unit[1]);
-        const scale = Math.min(Math.max(1, Math.min(2, pixelRatio)), Math.sqrt(4e6 / (width * height)));
+        const scale = Math.min(Math.max(1, Math.min(2, pixelRatio)) * 3, Math.sqrt(4e6 / (width * height)));
         viewport = page.getViewport({ scale });
         const box = viewport.convertToViewportRectangle(bounded);
         return {
@@ -567,6 +567,7 @@ var __PDFReaderRectangleEmbed = (() => {
         const bounded = [Math.max(page.view[0], rect[0]), Math.max(page.view[1], rect[1]), Math.min(page.view[2], rect[2]), Math.min(page.view[3], rect[3])];
         const box = rendered.viewport.convertToViewportRectangle(bounded);
         const ratioX = rendered.canvas.width / rendered.viewport.width, ratioY = rendered.canvas.height / rendered.viewport.height;
+        if (Math.abs(box[2] - box[0]) * ratioX < crop.width || Math.abs(box[3] - box[1]) * ratioY < crop.height) return null;
         const canvas = document.createElement("canvas");
         canvas.width = crop.width;
         canvas.height = crop.height;
@@ -645,7 +646,8 @@ var __PDFReaderRectangleEmbed = (() => {
             region.uuid,
             region.pageIndex,
             region.rect,
-            Math.min(2, ownerDocument.defaultView?.devicePixelRatio || 1)
+            Math.min(2, ownerDocument.defaultView?.devicePixelRatio || 1),
+            3
           ]);
         }
         async function regionImage(target, region, ownerDocument, signal, current, persist = true) {

@@ -37,6 +37,12 @@ test('crop bounds honor CropBox, preserve PDF geometry, and bound output memory'
   assert.throws(() => cropViewport(page, [0,0,1,1]), /页面内/);
 });
 
+test('region pixels are tripled while display width stays unchanged', () => {
+  const page = { view: [0,0,600,800], getViewport({scale}) { return { convertToViewportRectangle: r => r.map(x => x * scale) }; } };
+  const crop = cropViewport(page, [100,200,200,250], 1.25);
+  assert.equal(crop.width, 375); assert.equal(crop.height, 188); assert.equal(crop.cssWidth, 100);
+});
+
 test('document pool borrows only verified matching Readers and never destroys their document', async () => {
   let destroyed = 0;
   const document = { getPage() {}, destroy() { destroyed++; } };

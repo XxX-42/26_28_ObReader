@@ -25,7 +25,7 @@ function cropViewport(page, rect, pixelRatio = 1) {
   let viewport = page.getViewport({ scale: 1 });
   const unit = viewport.convertToViewportRectangle(bounded);
   const width = Math.abs(unit[2] - unit[0]), height = Math.abs(unit[3] - unit[1]);
-  const scale = Math.min(Math.max(1, Math.min(2, pixelRatio)), Math.sqrt(4_000_000 / (width * height)));
+  const scale = Math.min(Math.max(1, Math.min(2, pixelRatio)) * 3, Math.sqrt(4_000_000 / (width * height)));
   viewport = page.getViewport({ scale });
   const box = viewport.convertToViewportRectangle(bounded);
   return { viewport, x: Math.min(box[0], box[2]), y: Math.min(box[1], box[3]),
@@ -65,6 +65,8 @@ async function cropRenderedPage(page, rect, rendered, { document, pixelRatio = 1
   const bounded = [Math.max(page.view[0],rect[0]),Math.max(page.view[1],rect[1]),Math.min(page.view[2],rect[2]),Math.min(page.view[3],rect[3])];
   const box = rendered.viewport.convertToViewportRectangle(bounded);
   const ratioX = rendered.canvas.width / rendered.viewport.width, ratioY = rendered.canvas.height / rendered.viewport.height;
+  // Do not upscale a lower-resolution Reader canvas into a supposedly sharper image.
+  if (Math.abs(box[2]-box[0])*ratioX < crop.width || Math.abs(box[3]-box[1])*ratioY < crop.height) return null;
   const canvas = document.createElement('canvas'); canvas.width = crop.width; canvas.height = crop.height;
   try {
     canvas.getContext('2d').drawImage(rendered.canvas, Math.min(box[0],box[2])*ratioX, Math.min(box[1],box[3])*ratioY,
@@ -114,7 +116,7 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
   }
   function imageKey(target,region,ownerDocument) {
     return JSON.stringify([target.document.documentId,target.sourceHash,target.sourceVersion,region.uuid,region.pageIndex,region.rect,
-      Math.min(2,ownerDocument.defaultView?.devicePixelRatio||1)]);
+      Math.min(2,ownerDocument.defaultView?.devicePixelRatio||1),3]);
   }
   async function regionImage(target, region, ownerDocument, signal, current, persist=true) {
     const key=imageKey(target,region,ownerDocument);
