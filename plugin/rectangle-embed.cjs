@@ -112,6 +112,28 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
       const first = cache.keys().next().value; cachedBytes -= cache.get(first).blob.size; cache.delete(first);
     }
   }
+  function imageKey(target,region,ownerDocument) {
+    return JSON.stringify([target.document.documentId,target.sourceHash,target.sourceVersion,region.uuid,region.pageIndex,region.rect,
+      Math.min(2,ownerDocument.defaultView?.devicePixelRatio||1)]);
+  }
+  async function regionImage(target, region, ownerDocument, signal, current, persist=true) {
+    const key=imageKey(target,region,ownerDocument);
+    return enqueue(async()=>{
+      if(!current())throw Error('区域渲染已取消。');
+      if(cache.has(key)){const value=cache.get(key);cache.delete(key);cache.set(key,value);return value;}
+      const saved=await diskCache.get(key);
+      if(!current())throw Error('区域渲染已取消。');
+      if(saved){remember(key,saved);return saved;}
+      const lease=await acquireDocument(target,signal);
+      try {
+        if(!current())throw Error('区域渲染已取消。');
+        const page=await lease.document.getPage(region.pageIndex+1);
+        const options={document:lease.renderDocument||ownerDocument,pixelRatio:ownerDocument.defaultView?.devicePixelRatio||1,signal};
+        const image=await cropRenderedPage(page,region.rect,lease.renderedPage?.(region.pageIndex),options)||await renderRegion(page,region.rect,options);
+        if(current()){remember(key,image);if(persist)void diskCache.put(key,image);}return image;
+      } finally {await lease.release?.();}
+    });
+  }
   class RegionEmbed extends Component {
     constructor(context, file, subpath, parsed) {
       super(); this.context = context; this.file = file; this.subpath = subpath; this.parsed = parsed;
@@ -163,24 +185,7 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
           await this.fallback.loadFile?.(); return;
         }
         this.target = target;
-        const key = JSON.stringify([target.document.documentId, target.sourceHash, target.sourceVersion, region.uuid, region.pageIndex, region.rect,
-          Math.min(2, this.containerEl.ownerDocument.defaultView?.devicePixelRatio || 1)]);
-        const result = await enqueue(async () => {
-          if (!current()) throw new Error('区域渲染已取消。');
-          if (cache.has(key)) { const value = cache.get(key); cache.delete(key); cache.set(key, value); return value; }
-          const savedImage = await diskCache.get(key);
-          if (!current()) throw new Error('区域渲染已取消。');
-          if (savedImage) { remember(key,savedImage); return savedImage; }
-          const lease = await acquireDocument(target, signal);
-          try {
-            if (!current()) throw new Error('区域渲染已取消。');
-            const page = await lease.document.getPage(region.pageIndex + 1);
-            const options = { document: lease.renderDocument || this.containerEl.ownerDocument,
-              pixelRatio: this.containerEl.ownerDocument.defaultView?.devicePixelRatio || 1, signal };
-            const image = await cropRenderedPage(page, region.rect, lease.renderedPage?.(region.pageIndex), options) || await renderRegion(page, region.rect, options);
-            if (current()) { remember(key, image); void diskCache.put(key,image); } return image;
-          } finally { await lease.release?.(); }
-        });
+        const result = await regionImage(target,region,this.containerEl.ownerDocument,signal,current);
         if (!current()) return;
         if (this.imageUrl) URL.revokeObjectURL(this.imageUrl);
         this.imageUrl = URL.createObjectURL(result.blob);
@@ -226,6 +231,14 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
   };
   registry.embedByExtension.pdf = wrapper;
   return {
+    async prepare(parsed,file,ownerDocument,isCurrent=()=>true) {
+      const current=()=>!disposed&&isCurrent();
+      const target=await resolveTarget(parsed,file,'');
+      const region=squareRegion(target.row);
+      if(!region||!current())return;
+      const image=await regionImage(target,region,ownerDocument,undefined,current,false);
+      if(current())await diskCache.put(imageKey(target,region,ownerDocument),image);
+    },
     invalidate(path) { ++resolutionGeneration; resolvedTargets.clear(); for (const component of components) component.invalidate(path); },
     dispose() {
       disposed = true;

@@ -5977,6 +5977,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     if (pending.regionEmbed) {
       const currentRegion = () => isCurrent() && view.regionEmbedRequestId === message.requestId;
       const work = (this.autoCopyClipboardQueue || Promise.resolve()).catch(() => {}).then(async () => {
+        if(currentRegion() && this.rectangleEmbeds?.prepare) {
+          try { await this.rectangleEmbeds.prepare(parseReaderLinkFragment(fragment),view.documentFile||view.file,
+            view.iframe?.contentWindow?.document||globalThis.document,currentRegion); }
+          catch(error) { this.sessionLog?.record('readerAnchor',{event:'region-prepare-failed',message:String(error?.message||error)}); }
+        }
         if (currentRegion()) await this.copyReaderText(output);
       });
       this.autoCopyClipboardQueue = work;

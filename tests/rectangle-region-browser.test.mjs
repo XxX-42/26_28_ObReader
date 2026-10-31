@@ -78,7 +78,7 @@ test('real PDF.js region images exclude native annotations, rotate correctly, re
     });
     await mkdir(path.join(root,'tests/artifacts/rectangle-region'),{recursive:true});
     await writeFile(path.join(root,'tests/artifacts/rectangle-region/crop-size-benchmark.json'),JSON.stringify({kind:'browser fixture; crop render only',cropBenchmark},null,2));
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
       class Component {constructor(){this.children=[];} load(){this.loaded=true;this.onload?.();} addChild(c){this.children.push(c);if(this.loaded)c.load?.();return c;} unload(){for(const c of this.children)c.unload?.();this.onunload?.();}}
       let originalCalls=0;
       const original=()=>{originalCalls++;return new Component();};
@@ -91,6 +91,8 @@ test('real PDF.js region images exclude native annotations, rotate correctly, re
         resolveTarget:async()=>{regionTest.resolutions++;if(regionTest.deleted)throw Error('矩形目标已删除');return {file:regionTest.file,document:{documentId:'D'},row,sourceHash:'verified',readerTarget:{kind:'annotation',id:row.uuid},annotationPath:'annotations/A.jsonl'};},
         acquireDocument:async()=>{regionTest.renders++;return {document:fixtureDocument,release(){}};}};
       regionTest.runtime=RectangleModule.createRectangleEmbeds(regionTest.options);
+      await regionTest.runtime.prepare({target:{kind:'annotation',id:row.uuid}},file,document);
+      if(regionTest.renders!==1)throw Error('preparing a copied region must render exactly one cropped image');
       regionTest.context={containerEl:document.getElementById('embed'),sourcePath:'Note.md'};
       regionTest.component=registry.embedByExtension.pdf(regionTest.context,file,'#page=1&obreader=ann.rect-uuid');
       regionTest.component.load();

@@ -637,6 +637,49 @@ var __PDFReaderRectangleEmbed = (() => {
             cache.delete(first);
           }
         }
+        function imageKey(target, region, ownerDocument) {
+          return JSON.stringify([
+            target.document.documentId,
+            target.sourceHash,
+            target.sourceVersion,
+            region.uuid,
+            region.pageIndex,
+            region.rect,
+            Math.min(2, ownerDocument.defaultView?.devicePixelRatio || 1)
+          ]);
+        }
+        async function regionImage(target, region, ownerDocument, signal, current, persist = true) {
+          const key = imageKey(target, region, ownerDocument);
+          return enqueue(async () => {
+            if (!current()) throw Error("\u533A\u57DF\u6E32\u67D3\u5DF2\u53D6\u6D88\u3002");
+            if (cache.has(key)) {
+              const value = cache.get(key);
+              cache.delete(key);
+              cache.set(key, value);
+              return value;
+            }
+            const saved = await diskCache.get(key);
+            if (!current()) throw Error("\u533A\u57DF\u6E32\u67D3\u5DF2\u53D6\u6D88\u3002");
+            if (saved) {
+              remember(key, saved);
+              return saved;
+            }
+            const lease = await acquireDocument(target, signal);
+            try {
+              if (!current()) throw Error("\u533A\u57DF\u6E32\u67D3\u5DF2\u53D6\u6D88\u3002");
+              const page = await lease.document.getPage(region.pageIndex + 1);
+              const options = { document: lease.renderDocument || ownerDocument, pixelRatio: ownerDocument.defaultView?.devicePixelRatio || 1, signal };
+              const image = await cropRenderedPage(page, region.rect, lease.renderedPage?.(region.pageIndex), options) || await renderRegion(page, region.rect, options);
+              if (current()) {
+                remember(key, image);
+                if (persist) void diskCache.put(key, image);
+              }
+              return image;
+            } finally {
+              await lease.release?.();
+            }
+          });
+        }
         class RegionEmbed extends Component {
           constructor(context, file, subpath, parsed) {
             super();
@@ -703,48 +746,7 @@ var __PDFReaderRectangleEmbed = (() => {
                 return;
               }
               this.target = target;
-              const key = JSON.stringify([
-                target.document.documentId,
-                target.sourceHash,
-                target.sourceVersion,
-                region.uuid,
-                region.pageIndex,
-                region.rect,
-                Math.min(2, this.containerEl.ownerDocument.defaultView?.devicePixelRatio || 1)
-              ]);
-              const result = await enqueue(async () => {
-                if (!current()) throw new Error("\u533A\u57DF\u6E32\u67D3\u5DF2\u53D6\u6D88\u3002");
-                if (cache.has(key)) {
-                  const value = cache.get(key);
-                  cache.delete(key);
-                  cache.set(key, value);
-                  return value;
-                }
-                const savedImage = await diskCache.get(key);
-                if (!current()) throw new Error("\u533A\u57DF\u6E32\u67D3\u5DF2\u53D6\u6D88\u3002");
-                if (savedImage) {
-                  remember(key, savedImage);
-                  return savedImage;
-                }
-                const lease = await acquireDocument(target, signal);
-                try {
-                  if (!current()) throw new Error("\u533A\u57DF\u6E32\u67D3\u5DF2\u53D6\u6D88\u3002");
-                  const page = await lease.document.getPage(region.pageIndex + 1);
-                  const options = {
-                    document: lease.renderDocument || this.containerEl.ownerDocument,
-                    pixelRatio: this.containerEl.ownerDocument.defaultView?.devicePixelRatio || 1,
-                    signal
-                  };
-                  const image2 = await cropRenderedPage(page, region.rect, lease.renderedPage?.(region.pageIndex), options) || await renderRegion(page, region.rect, options);
-                  if (current()) {
-                    remember(key, image2);
-                    void diskCache.put(key, image2);
-                  }
-                  return image2;
-                } finally {
-                  await lease.release?.();
-                }
-              });
+              const result = await regionImage(target, region, this.containerEl.ownerDocument, signal, current);
               if (!current()) return;
               if (this.imageUrl) URL.revokeObjectURL(this.imageUrl);
               this.imageUrl = URL.createObjectURL(result.blob);
@@ -799,6 +801,14 @@ var __PDFReaderRectangleEmbed = (() => {
         };
         registry.embedByExtension.pdf = wrapper;
         return {
+          async prepare(parsed, file, ownerDocument, isCurrent = () => true) {
+            const current = () => !disposed && isCurrent();
+            const target = await resolveTarget(parsed, file, "");
+            const region = squareRegion(target.row);
+            if (!region || !current()) return;
+            const image = await regionImage(target, region, ownerDocument, void 0, current, false);
+            if (current()) await diskCache.put(imageKey(target, region, ownerDocument), image);
+          },
           invalidate(path) {
             ++resolutionGeneration;
             resolvedTargets.clear();
@@ -70187,6 +70197,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     if (pending.regionEmbed) {
       const currentRegion = () => isCurrent() && view.regionEmbedRequestId === message.requestId;
       const work = (this.autoCopyClipboardQueue || Promise.resolve()).catch(() => {}).then(async () => {
+        if(currentRegion() && this.rectangleEmbeds?.prepare) {
+          try { await this.rectangleEmbeds.prepare(parseReaderLinkFragment(fragment),view.documentFile||view.file,
+            view.iframe?.contentWindow?.document||globalThis.document,currentRegion); }
+          catch(error) { this.sessionLog?.record('readerAnchor',{event:'region-prepare-failed',message:String(error?.message||error)}); }
+        }
         if (currentRegion()) await this.copyReaderText(output);
       });
       this.autoCopyClipboardQueue = work;
