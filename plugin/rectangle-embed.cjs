@@ -56,6 +56,24 @@ async function renderRegion(page, rect, { document, pixelRatio = 1, signal, onTa
   }
 }
 
+async function cropRenderedPage(page, rect, rendered, { document, pixelRatio = 1, signal }) {
+  if (!rendered?.canvas || !rendered.viewport || signal?.aborted) return null;
+  // Embedded annotations may already be painted into the Viewer canvas.
+  if ((await page.getAnnotations({ intent: 'display' })).length || signal?.aborted || !rendered.current()) return null;
+  const crop = cropViewport(page, rect, pixelRatio);
+  const bounded = [Math.max(page.view[0],rect[0]),Math.max(page.view[1],rect[1]),Math.min(page.view[2],rect[2]),Math.min(page.view[3],rect[3])];
+  const box = rendered.viewport.convertToViewportRectangle(bounded);
+  const ratioX = rendered.canvas.width / rendered.viewport.width, ratioY = rendered.canvas.height / rendered.viewport.height;
+  const canvas = document.createElement('canvas'); canvas.width = crop.width; canvas.height = crop.height;
+  try {
+    canvas.getContext('2d').drawImage(rendered.canvas, Math.min(box[0],box[2])*ratioX, Math.min(box[1],box[3])*ratioY,
+      Math.abs(box[2]-box[0])*ratioX, Math.abs(box[3]-box[1])*ratioY,0,0,crop.width,crop.height);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve,'image/png'));
+    if (!blob || signal?.aborted || !rendered.current()) return null;
+    return { blob, cssWidth: crop.cssWidth, width: crop.width, height: crop.height };
+  } finally { canvas.width = canvas.height = 0; }
+}
+
 function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocument }) {
   const registry = plugin.app.embedRegistry;
   if (typeof registry?.embedByExtension?.pdf !== 'function' || typeof Component !== 'function') return null;
@@ -152,8 +170,9 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
           try {
             if (!current()) throw new Error('区域渲染已取消。');
             const page = await lease.document.getPage(region.pageIndex + 1);
-            const image = await renderRegion(page, region.rect, { document: lease.renderDocument || this.containerEl.ownerDocument,
-              pixelRatio: this.containerEl.ownerDocument.defaultView?.devicePixelRatio || 1, signal });
+            const options = { document: lease.renderDocument || this.containerEl.ownerDocument,
+              pixelRatio: this.containerEl.ownerDocument.defaultView?.devicePixelRatio || 1, signal };
+            const image = await cropRenderedPage(page, region.rect, lease.renderedPage?.(region.pageIndex), options) || await renderRegion(page, region.rect, options);
             if (current()) remember(key, image); return image;
           } finally { await lease.release?.(); }
         });
@@ -211,7 +230,7 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
     get size() { return components.size; },
   };
 }
-module.exports = { squareRegion, cropViewport, renderRegion, createRectangleEmbeds };
+module.exports = { squareRegion, cropViewport, renderRegion, cropRenderedPage, createRectangleEmbeds };
 
 // Borrow open Reader documents. Independently opened documents are released as
 // soon as their crop is rendered; only cropped images are kept in the cache.
@@ -251,7 +270,13 @@ function createRectangleDocumentPool(plugin, { loadLibrary } = {}) {
       let bytes;
       if (borrowed && !borrowed.destroyed && plugin.annotationHost?.isVerifiedReaderSource?.(view, stat) === true &&
           view.annotationSourceHash === target.document.source?.sourceHash) {
-        return { document: borrowed, renderDocument: view.iframe.contentWindow.document, release() {} };
+        return { document: borrowed, renderDocument: view.iframe.contentWindow.document, release() {}, renderedPage(index) {
+          const pageView = view.iframe.contentWindow.PDFViewerApplication.pdfViewer.getPageView(index);
+          const canvas = pageView?.canvas, viewport = pageView?.viewport;
+          const current = () => !borrowed.destroyed && !view.teardownStarted && pageView?.renderingState === 3 &&
+            pageView.canvas === canvas && pageView.viewport === viewport && canvas?.isConnected;
+          return current() ? { canvas, viewport, current } : null;
+        } };
       }
       if (!verifiedSources.has(key)) {
         bytes = new Uint8Array(await plugin.app.vault.readBinary(target.file));

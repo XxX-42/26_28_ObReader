@@ -501,6 +501,35 @@ var __PDFReaderRectangleEmbed = (() => {
           canvas.width = canvas.height = 0;
         }
       }
+      async function cropRenderedPage(page, rect, rendered, { document, pixelRatio = 1, signal }) {
+        if (!rendered?.canvas || !rendered.viewport || signal?.aborted) return null;
+        if ((await page.getAnnotations({ intent: "display" })).length || signal?.aborted || !rendered.current()) return null;
+        const crop = cropViewport(page, rect, pixelRatio);
+        const bounded = [Math.max(page.view[0], rect[0]), Math.max(page.view[1], rect[1]), Math.min(page.view[2], rect[2]), Math.min(page.view[3], rect[3])];
+        const box = rendered.viewport.convertToViewportRectangle(bounded);
+        const ratioX = rendered.canvas.width / rendered.viewport.width, ratioY = rendered.canvas.height / rendered.viewport.height;
+        const canvas = document.createElement("canvas");
+        canvas.width = crop.width;
+        canvas.height = crop.height;
+        try {
+          canvas.getContext("2d").drawImage(
+            rendered.canvas,
+            Math.min(box[0], box[2]) * ratioX,
+            Math.min(box[1], box[3]) * ratioY,
+            Math.abs(box[2] - box[0]) * ratioX,
+            Math.abs(box[3] - box[1]) * ratioY,
+            0,
+            0,
+            crop.width,
+            crop.height
+          );
+          const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+          if (!blob || signal?.aborted || !rendered.current()) return null;
+          return { blob, cssWidth: crop.cssWidth, width: crop.width, height: crop.height };
+        } finally {
+          canvas.width = canvas.height = 0;
+        }
+      }
       function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocument }) {
         const registry = plugin.app.embedRegistry;
         if (typeof registry?.embedByExtension?.pdf !== "function" || typeof Component !== "function") return null;
@@ -635,11 +664,12 @@ var __PDFReaderRectangleEmbed = (() => {
                 try {
                   if (!current()) throw new Error("\u533A\u57DF\u6E32\u67D3\u5DF2\u53D6\u6D88\u3002");
                   const page = await lease.document.getPage(region.pageIndex + 1);
-                  const image2 = await renderRegion(page, region.rect, {
+                  const options = {
                     document: lease.renderDocument || this.containerEl.ownerDocument,
                     pixelRatio: this.containerEl.ownerDocument.defaultView?.devicePixelRatio || 1,
                     signal
-                  });
+                  };
+                  const image2 = await cropRenderedPage(page, region.rect, lease.renderedPage?.(region.pageIndex), options) || await renderRegion(page, region.rect, options);
                   if (current()) remember(key, image2);
                   return image2;
                 } finally {
@@ -719,7 +749,7 @@ var __PDFReaderRectangleEmbed = (() => {
           }
         };
       }
-      module.exports = { squareRegion, cropViewport, renderRegion, createRectangleEmbeds };
+      module.exports = { squareRegion, cropViewport, renderRegion, cropRenderedPage, createRectangleEmbeds };
       function createRectangleDocumentPool(plugin, { loadLibrary } = {}) {
         const tasks = /* @__PURE__ */ new Set(), verifiedSources = /* @__PURE__ */ new Map(), urls = [];
         let libraryPromise = null, disposed = false;
@@ -759,6 +789,11 @@ var __PDFReaderRectangleEmbed = (() => {
             let bytes;
             if (borrowed && !borrowed.destroyed && plugin.annotationHost?.isVerifiedReaderSource?.(view, stat) === true && view.annotationSourceHash === target.document.source?.sourceHash) {
               return { document: borrowed, renderDocument: view.iframe.contentWindow.document, release() {
+              }, renderedPage(index) {
+                const pageView = view.iframe.contentWindow.PDFViewerApplication.pdfViewer.getPageView(index);
+                const canvas = pageView?.canvas, viewport = pageView?.viewport;
+                const current = () => !borrowed.destroyed && !view.teardownStarted && pageView?.renderingState === 3 && pageView.canvas === canvas && pageView.viewport === viewport && canvas?.isConnected;
+                return current() ? { canvas, viewport, current } : null;
               } };
             }
             if (!verifiedSources.has(key)) {
