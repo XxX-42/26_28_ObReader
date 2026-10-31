@@ -764,7 +764,12 @@ test(
     await assertCompactToolbarFits(640);
     await assertCompactToolbarFits(432);
     await assertCompactToolbarFits(320);
+    assert.equal(await viewer.$eval('#pdfReaderRectangleRegionButton',button=>button.parentElement.id),
+      'secondaryToolbarButtonContainer','region tool moves into the existing overflow menu in a narrow pane');
     await assertCompactToolbarFits(600);
+    assert.equal(await viewer.$eval('#pdfReaderRectangleRegionButton',button=>button.parentElement.id),'editorModeButtons');
+    assert.ok(await viewer.$eval('#pdfReaderRectangleRegionButton > span',span=>span.getBoundingClientRect().width>0),
+      'region glyph must remain visible instead of inheriting the hidden native label style');
     await page.setViewport({ width:1400, height:1000 });
     const toolbarControls = await viewer.evaluate(() => ({
       nativeTools: [

@@ -59,6 +59,10 @@ function encodeReaderLinkFragment(options = {}) {
       throw codedError("READER_LINK_IDENTITY_INVALID", "A valid document key and document identity are required together.");
     }
   }
+  if (options.includeIdentity === true) {
+    if (!docKey || !documentId) throw codedError("READER_LINK_IDENTITY_INVALID", "Region links require document identity.");
+    params.set("docKey", docKey); params.set("obdoc", documentId);
+  }
   if (target && ANCHOR_KINDS.has(target.kind) && typeof target.id === "string" &&
       target.id.length > 0 && target.id.length <= 512 && !/[\u0000-\u001f\u007f-\u009f&#?]/.test(target.id)) {
     const prefix = target.kind === "selection" ? "sel" : target.kind === "annotation" ? "ann" : "page";

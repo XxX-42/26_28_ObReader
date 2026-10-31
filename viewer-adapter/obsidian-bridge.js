@@ -680,6 +680,16 @@
     const app = state.app;
     const actual = state.actualSourceIdentity;
     if (!app?.pdfViewer || !actual || actual.identityStatus !== "KNOWN") return { error: "PDF 页面身份尚未确认。" };
+    if (mode === "annotation" && occurrence?.annotationUuid) {
+      const uuid = occurrence.annotationUuid;
+      const binding = [...state.annotationUuidByRuntimeId].find(([, value]) => value === uuid);
+      const editor = binding && app.pdfViewer?._layerProperties?.annotationEditorUIManager?.getEditor?.(binding[0]);
+      const pageIndex = editor?.pageIndex;
+      const pageIdentity = actual.orderedPageIdentities?.[pageIndex];
+      if (!editor || normalizeSyncKind(editor.editorType) !== "Square" || !pageIdentity) return { error: "矩形目标已失效。" };
+      return { capture: { kind: "annotation", annotationUuid: uuid, pageIndex,
+        pageNumber: pageIndex + 1, pageIdentity, sourceHash: actual.sourceHash } };
+    }
     if (mode === "annotation") {
       const selected = Array.from(document.querySelectorAll(".annotationEditorLayer .selectedEditor, .annotationEditorLayer [aria-selected='true']"));
       if (selected.length !== 1) return { error: "请先选中一个批注，再复制批注链接。" };
@@ -1834,6 +1844,8 @@
   }
 
   function syncBridgeControls() {
+    const regionButton = document.getElementById("pdfReaderRectangleRegionButton");
+    if (regionButton) regionButton.disabled = state.readOnly || !state.externalSourceConfirmed;
     const controls = state.bridgeControls;
     if (!controls) {
       return;
@@ -1881,6 +1893,21 @@
     const editorModes = document.getElementById("editorModeButtons");
     const more = document.getElementById("secondaryToolbarToggle");
     const availableWidth = toolbarViewer.clientWidth;
+    const regionButton = document.getElementById("pdfReaderRectangleRegionButton");
+    const secondary = document.getElementById("secondaryToolbarButtonContainer");
+    const square = document.getElementById("editorSquare");
+    // Keep the existing two-row hit boxes intact in narrow split panes.
+    // Reuse the same button and the existing responsive layout lifecycle.
+    if (regionButton && secondary && square) {
+      const compact = availableWidth < 360;
+      const parent = compact ? secondary : square.parentElement;
+      if (regionButton.parentElement !== parent) {
+        regionButton.classList.toggle("labeled", compact);
+        regionButton.firstElementChild.textContent = compact ? "矩形区域" : "▣";
+        if (compact) secondary.insertBefore(regionButton, state.bridgeControls.saveButton);
+        else square.after(regionButton);
+      }
+    }
     const groupWidths = [left, middle, editorModes, state.bridgeControls.group, more]
       .map(toolbarContentWidth);
     // A one-row toolbar contains two outer groups, then the editor, history,
@@ -3334,6 +3361,40 @@
     cancel.focus();
   }
 
+  function armRectangleRegion() {
+    if (state.readOnly || !state.externalSourceConfirmed || state.disposed) return;
+    state.rectangleRegion = { documentId: state.activeDocumentId, openRequest: state.activeOpenRequest,
+      pdfDocument: state.app.pdfDocument, editor: null, finishing: false };
+    state.app.eventBus.dispatch("switchannotationeditormode", { source: window, mode: 5, createNewEditor: false });
+  }
+
+  async function finishRectangleRegion(cancel = false) {
+    const pending = state.rectangleRegion;
+    if (!pending || pending.finishing) return;
+    const current = () => state.rectangleRegion === pending && !state.disposed &&
+      state.activeDocumentId === pending.documentId && state.activeOpenRequest === pending.openRequest &&
+      state.app?.pdfDocument === pending.pdfDocument &&
+      (!pending.finishing || pending.copySequence === state.autoCopySequence);
+    if (!current()) { state.rectangleRegion = null; return; }
+    if (cancel) { state.rectangleRegion = null; return; }
+    if (!pending.editor) return;
+    pending.copySequence = state.autoCopySequence;
+    pending.finishing = true;
+    try {
+      // Native Square already committed at the existing pointer boundary.
+      // Returning to arrow must not create another drawing session.
+      state.app.eventBus.dispatch("switchannotationeditormode", { source: window, mode: 0, createNewEditor: false });
+      const saved = await requestSave("manual");
+      if (!saved || !current()) return;
+      const uuid = state.annotationUuidByRuntimeId.get(String(pending.editor.id));
+      if (!uuid) throw new Error("无法确认已保存矩形的 UUID。");
+      postToHost("reader-anchor-occurrence-link-request", { requestId: makeSyncUuid(),
+        documentId: pending.documentId, openRequest: pending.openRequest,
+        output: "region-embed", annotationUuid: uuid });
+    } catch (error) { if (current()) showStatus(`区域链接未复制：${error.message || error}`); }
+    finally { if (state.rectangleRegion === pending) state.rectangleRegion = null; }
+  }
+
   function installBridgeControls() {
     if (state.bridgeControls) {
       return;
@@ -3347,6 +3408,17 @@
       return;
     }
     hideUnusedToolbarControls();
+    const regionButton = document.createElement("button");
+    regionButton.id = "pdfReaderRectangleRegionButton";
+    regionButton.type = "button";
+    regionButton.className = "toolbarButton pdfReaderRectangleRegionButton";
+    regionButton.title = "矩形区域：拖框后自动复制嵌入链接";
+    regionButton.setAttribute("aria-label", "矩形区域");
+    const regionIcon = document.createElement("span"); regionIcon.textContent = "▣";
+    regionButton.append(regionIcon);
+    regionButton.addEventListener("click", armRectangleRegion);
+    document.getElementById("editorSquare")?.after(regionButton);
+    if (!regionButton.isConnected) toolbar.prepend(regionButton);
     const statusBarButton = document.createElement("button");
     statusBarButton.id = "pdfReaderStatusBarToggle";
     statusBarButton.type = "button";
@@ -8560,6 +8632,10 @@
         }, cleanups);
       }
       runAnnotationObserver("editor.identity", () => rememberAnnotationEditorIdentity(editor));
+      const region = state.rectangleRegion;
+      if (region && !region.finishing && !region.editor && !state.hydratingExternalAnnotations &&
+          region.pdfDocument === app.pdfDocument && normalizeSyncKind(editor?.editorType) === "Square" &&
+          !editor.annotationElementId) region.editor = editor;
       const pendingSelection = state.pendingHighlightSelection;
       const runtimeId = String(editor?.id ?? "");
       if (pendingSelection?.text && !pendingSelection.assigned &&
@@ -10064,6 +10140,7 @@
         state.pendingInkCommit = true;
         state.autoSavePending = true;
       }
+      if (state.rectangleRegion && pointer.button === 0 && pointer.mode === 5) void finishRectangleRegion(cancel);
       runAnnotationObserver("pointer.controls", () => syncBridgeControls());
       if (!hasActivePointerInteraction()) {
         if (
@@ -11519,6 +11596,7 @@
       if (typeof message.heavyLeaseRequired === "boolean") {
         state.hostHeavyLeaseRequired = message.heavyLeaseRequired;
       }
+      state.rectangleRegion = null;
       state.activeDocumentId = null;
       state.annotationSidebarController?.closeAndClear();
       updatePageNumberWidth(0);
@@ -11739,6 +11817,7 @@
         setNativeAnnotationLayersPending(false, session.nativeAnnotationGateToken);
       }
       cleanupStorageObserver();
+      state.rectangleRegion = null;
       state.activeDocumentId = null;
       state.annotationSidebarController?.closeAndClear();
       updatePageNumberWidth(0);
@@ -11976,6 +12055,7 @@
         startIndex: message.startIndex,
         endIndex: message.endIndex,
         expectedSurface: message.expectedSurface,
+        annotationUuid: message.annotationUuid,
       });
       return;
     }
@@ -12629,6 +12709,7 @@
             if (mode !== 0 && isFromKeyboard) state.annotationController?.cancelPendingReadMode?.();
             cancelManualMomentum();
             invalidatePendingPenHighlight();
+            if (mode !== 5 && state.rectangleRegion && !state.rectangleRegion.finishing) state.rectangleRegion = null;
             state.editorMode = mode;
             if (PERSISTABLE_ANNOTATION_TOOL_MODES.has(mode) && !state.readOnly &&
                 state.activeDocumentId && Number.isInteger(state.activeOpenRequest)) {
@@ -12871,6 +12952,7 @@
     updatePageNumberWidth(0);
     postLifecycleToHost("renderer-unloaded");
     cancelPendingHeavyLeaseWaiters("The PDF view was closed.");
+    state.rectangleRegion = null;
     state.disposed = true;
     state.mouseChordPan?.dispose();
     state.floatingPdfOutline?.dispose();

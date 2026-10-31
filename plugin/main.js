@@ -4,6 +4,7 @@
  * Bundled third-party notices are preserved in the embedded viewer resources.
  */
 const {
+  Component,
   EditableFileView,
   Modal,
   Notice,
@@ -15,6 +16,7 @@ const {
   WorkspaceLeaf,
   normalizePath,
 } = require("obsidian");
+/* BUILD:RECTANGLE_EMBED_REQUIRE */ const { createRectangleEmbeds, createRectangleDocumentPool, squareRegion } = require("./rectangle-embed.cjs");
 /* BUILD:SESSION_LOG_REQUIRE */ const { createSessionLog } = require("./session-log.cjs");
 function startSessionLog(plugin) {
   if (plugin.sessionLog) return plugin.sessionLog;
@@ -1783,6 +1785,7 @@ class PdfReaderView extends EditableFileView {
     this.clearPendingVocabularyContextCaptures();
     this.pendingReaderTarget = null;
     const closingFile = this.documentFile || this.file;
+    this.plugin.rectangleEmbeds?.invalidate(closingFile?.path);
     const closeWasPrepared = this.isPreparedCloseForCurrent();
     if (!closeWasPrepared) {
       const flush = await this.flushDocument(250);
@@ -3201,6 +3204,7 @@ class PdfReaderView extends EditableFileView {
     const pending = { ...identity, mode, timer: null,
       clientRequestId: suppliedRequestId ? requestId : null,
       clientResponseType: responseType,
+      regionEmbed: options.regionEmbed === true,
       contextRequest: options.contextRequest && typeof options.contextRequest === "object"
         ? { ...options.contextRequest } : null };
     pending.timer = globalThis.setTimeout(() => {
@@ -3215,6 +3219,7 @@ class PdfReaderView extends EditableFileView {
     const sent = this.postToViewer({ channel: CHANNEL, token: this.token,
       type: "reader-anchor-capture-request", requestId, mode,
       documentId: identity.documentId, openRequest: identity.openRequest,
+      ...(options.regionEmbed === true ? { annotationUuid: details?.annotationUuid } : {}),
       ...(mode === "occurrence" && details ? {
         pageNumber: details.pageNumber, startIndex: details.startIndex, endIndex: details.endIndex,
         expectedSurface: details.expectedSurface,
@@ -3784,6 +3789,15 @@ class PdfReaderView extends EditableFileView {
       });
       return;
     }
+    if (message.type === "reader-anchor-occurrence-link-request" && message.output === "region-embed") {
+      if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
+          message.openRequest !== this.openRequest || typeof message.annotationUuid !== "string" ||
+          message.annotationUuid.length > 512 || typeof message.requestId !== "string" || message.requestId.length > 128) return;
+      this.regionEmbedRequestId = message.requestId;
+      this.requestReaderAnchorCapture("annotation", { annotationUuid: message.annotationUuid }, message.requestId,
+        { regionEmbed: true });
+      return;
+    }
     if (message.type === "reader-anchor-occurrence-link-request") {
       if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
           message.openRequest !== this.openRequest || typeof message.requestId !== "string" ||
@@ -3955,6 +3969,7 @@ class PdfReaderView extends EditableFileView {
         void this.plugin.setAutoCopySelectionLinksEnabled(this.plugin.settings.autoCopySelectionLinks === false);
         break;
       case 'reader-auto-copy-cancel':
+        if(message.documentId===this.documentId&&message.openRequest===this.openRequest)this.regionEmbedRequestId=null;
         if(message.documentId===this.documentId&&message.openRequest===this.openRequest)this.autoCopySelectionSequence=message.sequence;
         break;
       case 'reader-auto-copy-selection':
@@ -4228,6 +4243,7 @@ class PdfReaderView extends EditableFileView {
         origin,
       };
       await this.plugin.annotationHost.handleMessage(this, message);
+      this.plugin.rectangleEmbeds?.invalidate(request.file.path);
     } catch (error) {
       this.recordSaveTiming({ requestId, documentId, status: "error", elapsedMs: performance.now() - saveStartedAt });
       this.postToViewer({
@@ -4575,6 +4591,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       Notice,
       log: (event, details) => this.sessionLog?.record("annotationStore", { event, ...details }),
     });
+    this.rectangleDocumentPool = createRectangleDocumentPool(this);
+    this.rectangleEmbeds = createRectangleEmbeds({ plugin: this, Component,
+      resolveTarget: (parsed, file, sourcePath) => this.resolveRectangleEmbedTarget(parsed, file, sourcePath),
+      acquireDocument: (target, signal) => this.rectangleDocumentPool.acquire(target, signal),
+    });
     this.readerAnchorStore = createReaderAnchorStore({
       adapter: this.app.vault.adapter,
       hash: (bytes) => this.pdfHashRuntime.fingerprint(bytes),
@@ -4766,6 +4787,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       this.registerEvent(
         this.app.vault.on("modify", (file) => {
           if (isVocabularyDictionaryResourcePath(file?.path)) this.handleVocabularyDictionaryResourceChange(file.path);
+          this.rectangleEmbeds?.invalidate(file?.path);
           this.handleReaderBacklinkAnchorFileChange(file?.path);
           if (typeof file?.path === "string" && file.path.toLowerCase().endsWith(".md")) {
             this.refreshReaderBacklinkFile(file);
@@ -4781,6 +4803,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       this.registerEvent(
         this.app.vault.on("create", (file) => {
           if (isVocabularyDictionaryResourcePath(file?.path)) this.handleVocabularyDictionaryResourceChange(file.path);
+          this.rectangleEmbeds?.invalidate(file?.path);
           this.handleReaderBacklinkAnchorFileChange(file?.path);
           if (typeof file?.path === "string" && file.path.toLowerCase().endsWith(".md")) {
             this.refreshReaderBacklinkFile(file);
@@ -4793,6 +4816,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       this.registerEvent(
         this.app.vault.on("delete", (file) => {
           if (isVocabularyDictionaryResourcePath(file?.path)) this.handleVocabularyDictionaryResourceChange(file.path);
+          this.rectangleEmbeds?.invalidate(file?.path);
           this.handleReaderBacklinkAnchorFileChange(file?.path, { deleted: true });
           if (typeof file?.path === "string" && file.path.toLowerCase().endsWith(".md")) {
             this.removeReaderBacklinkFile(file.path);
@@ -4801,6 +4825,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       );
       this.registerEvent(
         this.app.vault.on("rename", (file, oldPath) => {
+          this.rectangleEmbeds?.invalidate();
           if (isPdfFile(file) || Array.isArray(file?.children)) {
             // Compact Markdown links retain their historical PDF route by
             // design. Rebind those links from their verified Anchor identity
@@ -5648,7 +5673,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       } else {
         throw new Error("当前批注存储不支持只读链接解析。");
       }
-      const identity = effective.document || effective;
+      const identity = effective.document?.documentId ? effective.document : effective;
       if (identity.documentId !== documentId || identity.docKey !== docKey) {
         throw new Error("批注状态与链接中的文档身份不匹配。");
       }
@@ -5669,6 +5694,22 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       readerTarget = { ...readerTarget, pageNumber: row.pageIndex + 1 };
     }
     return { file, readerTarget };
+  }
+
+  async resolveRectangleEmbedTarget(parsed, file, sourcePath) {
+    const resolved = await this.resolveReaderLinkDocument(parsed, file.path, sourcePath);
+    const target = resolved.readerTarget;
+    const document = await this.annotationHost.store.documentForIdentity({ docKey: target.docKey, documentId: target.documentId });
+    const snapshot = await this.annotationHost.store.readDocument(document, { readOnly: true });
+    const rows = Array.isArray(snapshot.annotations) ? snapshot.annotations : Object.values(snapshot.annotations || {});
+    const removed = [...(snapshot.tombstones || []), ...(snapshot.deletionGuards || [])];
+    const row = rows.find(row => row.uuid === target.id && !row.deleted && !removed.some(item => item.uuid === row.uuid));
+    if (!row) throw new Error("矩形目标已删除或不存在。");
+    const stat = await this.app.vault.adapter.stat(resolved.file.path);
+    const paths = this.annotationHost.store.pathsFor?.(document);
+    return { ...resolved, document, row, sourceHash: document.source?.sourceHash,
+      sourceVersion: `${stat?.mtime}:${stat?.size}`,
+      annotationPath: paths?.snapshot || paths?.current };
   }
 
   async resolveReaderLinkFallback(parsed, linkPath, sourcePath = "") {
@@ -5888,14 +5929,19 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       target = { kind: "selection", id: anchor.anchorId };
       selection = capture.nativeSelection || null;
     } else if (capture.kind === "annotation") {
-      const rows = Array.isArray(view.annotationSnapshot?.annotations)
-        ? view.annotationSnapshot.annotations : Object.values(view.annotationSnapshot?.annotations || {});
-      const row = rows.find((entry) => entry?.uuid === capture.annotationUuid && entry.deleted !== true);
+      const durable = pending.regionEmbed
+        ? await this.annotationHost.store.readDocument(document, { readOnly: true }) : view.annotationSnapshot;
+      if (!isCurrent()) return true;
+      const rows = Array.isArray(durable?.annotations) ? durable.annotations : Object.values(durable?.annotations || {});
+      const row = rows.find((entry) => entry?.uuid === capture.annotationUuid && entry.deleted !== true &&
+        !(durable.tombstones || []).some(deleted => deleted.uuid === entry.uuid) &&
+        !(durable.deletionGuards || []).some(deleted => deleted.uuid === entry.uuid));
       if (!row || row.pageIndex !== pageIndex) {
         respondClient(false, "所选批注不存在或已删除。");
         new Notice("所选批注不存在或已删除；没有创建链接。", 6000);
         return true;
       }
+      if (pending.regionEmbed && !squareRegion(row)) throw new Error("区域链接必须指向已保存的矩形批注。");
       target = { kind: "annotation", id: row.uuid };
     } else if (capture.kind === "page") {
       target = { kind: "page", id: pageIdentity };
@@ -5908,13 +5954,13 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       if (!isCurrent()) return true;
     }
     const fragment = encodeReaderLinkFragment({ pageNumber: pageIndex + 1, selection,
-      docKey: document.docKey, documentId: document.documentId, target });
+      docKey: document.docKey, documentId: document.documentId, target, includeIdentity: pending.regionEmbed === true });
     const relativePath = view.documentFile?.path || view.file?.path;
     if (!relativePath) throw new Error("当前 PDF 路径不可用。");
     const label = `${view.documentFile?.basename || view.file?.basename || "PDF"} · p.${pageIndex + 1}`;
     const safePath = relativePath.replaceAll("#", "%23").replaceAll("|", "\\|");
     const link = `[[${safePath}#${fragment}|${label.replaceAll("|", "\\|")}]]`;
-    const output = pending.mode === "quote" && capture.kind === "selection"
+    const output = pending.regionEmbed ? `!${link}` : pending.mode === "quote" && capture.kind === "selection"
       ? `${capture.exactQuote.split("\n").map((line) => `> ${line}`).join("\n")}\n\n${link}`
       : link;
     if (!isCurrent()) return true;
@@ -5928,7 +5974,15 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       pending.collectLink(copied);
       return true;
     }
-    await this.copyReaderText(output);
+    if (pending.regionEmbed) {
+      const currentRegion = () => isCurrent() && view.regionEmbedRequestId === message.requestId;
+      const work = (this.autoCopyClipboardQueue || Promise.resolve()).catch(() => {}).then(async () => {
+        if (currentRegion()) await this.copyReaderText(output);
+      });
+      this.autoCopyClipboardQueue = work;
+      await work;
+      if (!currentRegion()) return true;
+    } else await this.copyReaderText(output);
     if (!isCurrent()) return true;
     new Notice(capture.kind === "selection" ? "已复制带稳定 Selection Anchor 的 PDF 链接。" : "已复制 PDF 链接。", 4000);
     this.sessionLog?.record("readerAnchor", { event: "link-copied", kind: capture.kind,
@@ -6137,6 +6191,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
 
   onunload() {
     this.isUnloading = true;
+    this.rectangleEmbeds?.dispose();
+    void this.rectangleDocumentPool?.dispose();
     this.learningHost?.dispose();
     for (const cleanup of [...(this.readerBacklinkFocusCleanups || [])]) cleanup();
     this.readerBacklinkFocusCleanups?.clear?.();

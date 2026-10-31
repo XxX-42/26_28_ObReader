@@ -5978,3 +5978,65 @@ test("concurrent color and other settings writes preserve both preferences", asy
   assert.equal(harness.plugin.persistedData.showStatusBar, true);
   harness.plugin.onunload();
 });
+
+test('rectangle embed capture requires durable Square, preserves identity through rename, and cancels stale clipboard', async () => {
+  const harness = createHarness({ storageProtocol: 'wal' });
+  await harness.plugin.onload();
+  try {
+    const source = Uint8Array.from([37,80,68,70,4,5,6]);
+    const file = new harness.TFile('Books/区域.pdf', source);
+    const reader = await createSidecarReader(harness, file, {pageCount:1,orderedPageIdentities:['region-page']});
+    const {view}=reader, uuid='550e8400-e29b-41d4-a716-446655440090';
+    const copied=[];harness.plugin.copyReaderText=async text=>copied.push(text);
+    const capture={kind:'annotation',annotationUuid:uuid,pageIndex:0,pageNumber:1,pageIdentity:'region-page',sourceHash:view.annotationSourceHash};
+    const send=async id=>{
+      view.regionEmbedRequestId=id;
+      view.pendingReaderAnchorCaptures.set(id,{documentId:view.documentId,openRequest:view.openRequest,
+        rendererGeneration:view.rendererGeneration,mode:'annotation',regionEmbed:true,timer:null});
+      return harness.plugin.handleReaderAnchorCapture(view,{requestId:id,documentId:view.documentId,
+        openRequest:view.openRequest,rendererGeneration:view.rendererGeneration,capture});
+    };
+    await send('unsaved');assert.deepEqual(copied,[],'unpublished rectangle cannot produce an embed');
+    await saveSidecarOperations(reader,{requestId:'region-save',operations:[{uuid,kind:'Square',pageIndex:0,
+      deleted:false,payload:{editor:{annotationType:5,rect:[10,20,90,80],color:[255,0,0]}}}]});
+    await send('saved');assert.equal(copied.length,1,JSON.stringify({notices:harness.notices,snapshot:view.annotationSnapshot,capture,hash:view.annotationSourceHash,document:view.annotationDocument}));assert.match(copied[0],/^!\[\[/);
+    const parsed=parseReaderLinkFragment(copied[0].split('#')[1].split('|')[0]);
+    assert.equal(parsed.docKey,view.annotationDocument.docKey);
+    assert.equal(parsed.documentId,view.annotationDocument.documentId);
+    assert.deepEqual(parsed.target,{kind:'annotation',id:uuid});
+    const store=harness.plugin.annotationHost.store, ensure=store.ensureDocumentIdentity;
+    let release, entered;
+    const enteredPromise=new Promise(resolve=>{entered=resolve;});
+    const blocked=new Promise(resolve=>{release=resolve;});
+    store.ensureDocumentIdentity=async document=>{entered();await blocked;return ensure?.(document);};
+    const stale=send('stale-clipboard');await enteredPromise;
+    view.regionEmbedRequestId='newer-selection';release();await stale;
+    assert.equal(copied.length,1,'late region requests must not overwrite a newer selection clipboard');
+    store.ensureDocumentIdentity=ensure;
+    const oldPath=file.path;harness.files.delete(oldPath);file.path='Moved/区域 新名称.pdf';harness.files.set(file.path,file);
+    await harness.plugin.annotationHost.renamed(file,oldPath);
+    const resolved=await harness.plugin.resolveReaderLinkDocument(parsed,oldPath,'Notes/A.md');
+    assert.equal(resolved.file.path,file.path);assert.equal(resolved.readerTarget.id,uuid);
+    assert.equal(resolved.readerTarget.pageNumber,1);
+    const row=(await harness.plugin.annotationHost.store.readDocument(view.annotationDocument,{readOnly:true})).annotations.find(row=>row.uuid===uuid);
+    assert.deepEqual(row.payload.editor.rect,[10,20,90,80]);assert.equal(row.kind,'Square');
+    assert.equal(file.writes,0);assert.deepEqual(file.bytes,source);
+  } finally {harness.plugin.onunload();}
+});
+
+test('v15 annotation navigation reads top-level identity rather than the display-only document descriptor', async () => {
+  const harness=createHarness({storageProtocol:'wal'});await harness.plugin.onload();
+  try {
+    const file=new harness.TFile('Books/current-v15-shape.pdf',Uint8Array.from([37,80,68,70,1,2,3]));
+    const reader=await createSidecarReader(harness,file,{pageCount:1,orderedPageIdentities:['v15-page']});
+    const uuid='v15-square-navigation';await saveSidecarOperations(reader,{requestId:'v15-shape-save',operations:[{uuid,kind:'Square',pageIndex:0,deleted:false,payload:{editor:{rect:[1,2,30,40]}}}]});
+    const store=harness.plugin.annotationHost.store, read=store.readDocument.bind(store);
+    store.readDocument=async(...args)=>{const snapshot=await read(...args);return {...snapshot,document:{id:snapshot.documentId,path:file.path}};};
+    store.exportForMigration=undefined;
+    const document=reader.view.annotationDocument;
+    const parsed=parseReaderLinkFragment(encodeReaderLinkFragment({pageNumber:1,target:{kind:'annotation',id:uuid},docKey:document.docKey,documentId:document.documentId,includeIdentity:true}));
+    const resolved=await harness.plugin.resolveReaderLinkDocument(parsed,file.path);
+    assert.equal(resolved.readerTarget.id,uuid);assert.equal(resolved.readerTarget.documentId,document.documentId);
+    assert.equal(file.writes,0);
+  }finally{harness.plugin.onunload();}
+});

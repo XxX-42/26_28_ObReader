@@ -379,7 +379,7 @@ function makeHarness({ appMobile = true, platformMobile = false, platformIos = f
         "./pdf-recovery-read.cjs", "./pdf-annotation-host.cjs", "./reader-anchor-store.cjs", "./vocabulary/canonical.cjs",
         "./reader-backlink-index.cjs", "./selection-copy-format.cjs", "./vocabulary/service.cjs", "./vocabulary/dictionary.cjs",
         "./vocabulary/modals.cjs", "./vocabulary/workspace.cjs", "./vocabulary/workbench.cjs",
-        "./learning/host.cjs", "./semantic/services.cjs", "./session-log.cjs"].includes(name)) return sourceRequire(name);
+        "./learning/host.cjs", "./semantic/services.cjs", "./rectangle-embed.cjs", "./session-log.cjs"].includes(name)) return sourceRequire(name);
       if (name.startsWith("node:")) nodeRuntimeRequires.push(name);
       throw new Error(`Unexpected plugin require: ${name}`);
     },

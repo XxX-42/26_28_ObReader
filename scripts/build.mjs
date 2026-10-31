@@ -531,7 +531,11 @@ assert.equal([...sourceMain.matchAll(new RegExp(readerBacklinkIndexMarker.source
 const inlinedReaderBacklinkIndex = await inlineModule("reader-backlink-index.cjs", "__PDFReaderBacklinkIndex", "buildReaderBacklinkPageIndex, createReaderBacklinkIndex, normalizePdfRoutePath");
 assert.equal([...sourceMain.matchAll(new RegExp(selectionCopyFormatMarker.source, "g"))].length, 1);
 const inlinedSelectionCopyFormat = await inlineModule("selection-copy-format.cjs", "__PDFReaderSelectionCopyFormat", "DEFAULT_COPY_TEMPLATE, DEFAULT_DISPLAY_TEMPLATE, COPY_PRESETS, formatSelectionCopy");
+const rectangleEmbedMarker = /\/\* BUILD:RECTANGLE_EMBED_REQUIRE \*\/[^\n]+/;
+assert.match(sourceMain, rectangleEmbedMarker);
+const inlinedRectangleEmbed = await inlineModule("rectangle-embed.cjs", "__PDFReaderRectangleEmbed", "createRectangleEmbeds, createRectangleDocumentPool, squareRegion");
 const bundledMain = sourceMain
+  .replace(rectangleEmbedMarker, () => inlinedRectangleEmbed)
   .replace(requireMarker, () => inlinedHelper)
   .replace(hashRuntimeMarker, () => inlinedHashRuntime)
   .replace(mergeClientMarker, () => inlinedMergeClient)
