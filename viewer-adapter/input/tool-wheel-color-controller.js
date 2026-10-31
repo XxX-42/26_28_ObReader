@@ -87,6 +87,14 @@
     }
 
     decorate(wheel) {
+      wheel.items.forEach((item, index) => {
+        if (item.label !== '自由画笔') return;
+        item.label = '画笔';
+        const button = wheel.element.querySelector(`button[data-sector="${index}"]`);
+        button?.setAttribute('aria-label', item.label);
+        const caption = button?.querySelector('.pdfToolWheelLabelText');
+        if (caption) caption.textContent = item.label;
+      });
       if (!wheel.bridgeScaled) {
         wheel.radius *= 0.9;
         wheel.element.style.width = `${wheel.radius * 2}px`;
