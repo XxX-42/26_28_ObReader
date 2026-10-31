@@ -72,7 +72,8 @@ test("wheel color selection applies after host confirmation", {
               } else if(message.type==='opened') host.opened++;
               else if(message.type==='annotation-tool-color-preference-request') {
                 host.colorRequests.push(message);
-                iframe.contentWindow.postMessage({channel,token,type:'annotation-tool-color-preference-update',rendererGeneration:host.rendererGeneration,documentId:message.documentId,openRequest:message.openRequest,colors:{[message.mode]:message.color}},'*');
+                host.colors = {...host.colors, [message.mode]: message.color};
+                iframe.contentWindow.postMessage({channel,token,type:'annotation-tool-color-preference-update',rendererGeneration:host.rendererGeneration,documentId:message.documentId,openRequest:message.openRequest,colors:host.colors},'*');
               }
               else if(message.type==='vocab-toggle-request'){
                 host.vocabularyEnabled=message.enabled===true;
@@ -203,6 +204,15 @@ test("wheel color selection applies after host confirmation", {
     assert.equal((await page.evaluate(() => window.__host.colorRequests[1])).color, '#1971C2');
     await viewer.waitForFunction(() => window.__colorSnapshots.some(colors => colors[3] === '#1971C2'));
     assert.equal(await viewer.$eval('.freeTextEditor .internal', node => getComputedStyle(node).color), 'rgb(224, 49, 49)');
+    await page.mouse.move(offset.x+center.x,offset.y+center.y);await page.mouse.down({button:'middle'});
+    await viewer.waitForSelector('.pdfToolWheel');
+    await page.mouse.move(offset.x+center.x+60,offset.y+center.y+35,{steps:3});
+    await viewer.waitForSelector('.pdfToolWheelColors [data-color="#2F9E44"]');
+    const inkColor=await viewer.$eval('.pdfToolWheelColors [data-color="#2F9E44"]',node=>{const r=node.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}});
+    await page.mouse.move(offset.x+inkColor.x,offset.y+inkColor.y,{steps:3});await page.mouse.up({button:'middle'});
+    await page.waitForFunction(()=>window.__host.colorRequests.length===3,{timeout:5000});
+    assert.deepEqual(await page.evaluate(()=>({mode:window.__host.colorRequests[2].mode,color:window.__host.colorRequests[2].color,colors:window.__host.colors})),{mode:15,color:'#2F9E44',colors:{3:'#1971C2',15:'#2F9E44'}});
+    assert.equal(await viewer.$eval('.freeTextEditor .internal',node=>getComputedStyle(node).color),'rgb(224, 49, 49)','ink choice must not recolor existing text');
   } catch (error) {
     primaryError = error;
   } finally {
