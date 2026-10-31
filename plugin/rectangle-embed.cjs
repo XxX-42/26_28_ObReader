@@ -210,13 +210,13 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
 }
 module.exports = { squareRegion, cropViewport, renderRegion, createRectangleEmbeds };
 
-// A single frozen-library instance and a bounded document pool, never a second
-// Viewer. Only documents owned here are destroyed; borrowed Reader docs remain
-// entirely under their Reader lifecycle.
-function createRectangleDocumentPool(plugin) {
-  const documents = new Map(), verifiedSources = new Map(), urls = [];
+// Borrow open Reader documents. Independently opened documents are released as
+// soon as their crop is rendered; only cropped images are kept in the cache.
+function createRectangleDocumentPool(plugin, { loadLibrary } = {}) {
+  const tasks = new Set(), verifiedSources = new Map(), urls = [];
   let libraryPromise = null, disposed = false;
   async function library() {
+    if (loadLibrary) return loadLibrary();
     if (!libraryPromise) libraryPromise = (async () => {
       const [pdfBytes, workerBytes, assets] = await Promise.all([
         plugin.readVerifiedAsset('build/pdf.mjs'), plugin.readVerifiedAsset('build/pdf.worker.mjs'), plugin.ensureViewerAssets(),
@@ -259,31 +259,24 @@ function createRectangleDocumentPool(plugin) {
         while (verifiedSources.size > 4) verifiedSources.delete(verifiedSources.keys().next().value);
       }
       if (borrowed && !borrowed.destroyed) return { document: borrowed, renderDocument: view.iframe.contentWindow.document, release() {} };
-      if (documents.has(key)) {
-        const value = documents.get(key); documents.delete(key); documents.set(key, value);
-        return { document: value.document, release() {} };
-      }
       bytes ||= new Uint8Array(await plugin.app.vault.readBinary(target.file));
       const { pdfjs, base } = await library();
       if (disposed || signal?.aborted) throw new Error('区域渲染已取消。');
       const task = pdfjs.getDocument({ data: bytes, cMapUrl: `${base}cmaps/`, cMapPacked: true,
         standardFontDataUrl: `${base}standard_fonts/`, wasmUrl: `${base}wasm/`, iccUrl: `${base}iccs/` });
+      tasks.add(task);
       const abort = () => { void task.destroy(); };
       signal?.addEventListener('abort', abort, { once: true });
       let document;
       try { document = await task.promise; }
+      catch (error) { tasks.delete(task); await task.destroy(); throw error; }
       finally { signal?.removeEventListener('abort', abort); }
-      if (disposed || signal?.aborted) { await task.destroy(); throw new Error('区域渲染已取消。'); }
-      documents.set(key, { document, task });
-      while (documents.size > 2) {
-        const first = documents.keys().next().value, old = documents.get(first);
-        documents.delete(first); await old.task.destroy();
-      }
-      return { document, release() {} };
+      if (disposed || signal?.aborted) { tasks.delete(task); await task.destroy(); throw new Error('区域渲染已取消。'); }
+      return { document, async release() { if (tasks.delete(task)) await task.destroy(); } };
     },
     async dispose() {
       disposed = true;
-      await Promise.allSettled([...documents.values()].map(value => value.task.destroy())); documents.clear(); verifiedSources.clear();
+      await Promise.allSettled([...tasks].map(task => task.destroy())); tasks.clear(); verifiedSources.clear();
       for (const url of urls) URL.revokeObjectURL(url); urls.length = 0;
     },
   };

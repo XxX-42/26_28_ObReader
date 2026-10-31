@@ -56,6 +56,11 @@ try {
     const button=w.document.getElementById('pdfReaderRectangleRegionButton');if(!button||button.disabled)throw Error('Rectangle button unavailable');button.click();
     const page=w.document.querySelector('.page[data-page-number="1"]').getBoundingClientRect();
     return {x:f.x+page.x+page.width*.2,y:f.y+page.y+page.height*.2,x2:f.x+page.x+page.width*.65,y2:f.y+page.y+page.height*.32};`);
+  report.dragTarget=await evaluate(`const r=app.__regionNative, f=r.view.iframe.getBoundingClientRect(), w=r.view.iframe.contentWindow;
+    const hit=document.elementFromPoint(${rect.x},${rect.y}),inner=w.document.elementFromPoint(${rect.x}-f.x,${rect.y}-f.y);
+    return {point:${JSON.stringify(rect)},outerHit:hit?.tagName,iframeHit:hit===r.view.iframe,innerHit:inner?.className,visibility:document.visibilityState,focus:document.hasFocus()};`);
+  await evaluate(`const r=app.__regionNative,w=r.view.iframe.contentWindow;r.inputEvents=[];r.inputProbe=e=>r.inputEvents.push({type:e.type,x:e.clientX,y:e.clientY,buttons:e.buttons,trusted:e.isTrusted});
+    for(const name of ['pointerdown','pointermove','pointerup'])w.document.addEventListener(name,r.inputProbe,true);return true;`);
   await wait(`return app.__regionNative.view.iframe.contentWindow.PDFViewerApplication.pdfViewer.annotationEditorMode===5;`,'Square tool');
   nativeCdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:rect.x,y:rect.y});
   nativeCdp('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',buttons:1,clickCount:1,x:rect.x,y:rect.y});
@@ -66,10 +71,20 @@ try {
   report.saved=await evaluate(`const r=app.__regionNative,p=app.plugins.plugins['pdf-web-reader'];const state=await p.annotationHost.store.readDocument(r.view.annotationDocument,{readOnly:true});
     const bytes=new Uint8Array(await app.vault.readBinary(r.view.documentFile));r.pairedSha=require('crypto').createHash('sha256').update(bytes).digest('hex');r.pairedXxh=p.pdfHashRuntime.fingerprint(bytes);
     r.sourceWrites=0;r.savedRows=state.annotations;r.link=r.links[0];r.notePath=r.directory+'/Notes/区域笔记.md';await app.vault.create(r.notePath,r.link);
+    r.firstProfile=[];r.restoreProfile=[];
+    const wrap=(obj,key)=>{const original=obj[key];obj[key]=async function(...args){const start=performance.now();try{return await original.apply(this,args)}finally{r.firstProfile.push({stage:key,ms:performance.now()-start})}};r.restoreProfile.push(()=>obj[key]=original);};
+    wrap(p,'resolveRectangleEmbedTarget');wrap(p.rectangleDocumentPool,'acquire');wrap(r.host.store,'readDocument');wrap(app.vault,'readBinary');
+    r.firstEmbedStart=performance.now();r.firstEmbedTiming=new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{observer.disconnect();reject(Error('first embed timing timeout'))},15000);
+      const observer=new MutationObserver(()=>{const img=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(x=>x.getBoundingClientRect().width>0);if(!img)return;
+        observer.disconnect();img.decode().then(()=>{clearTimeout(timer);resolve(performance.now()-r.firstEmbedStart)},reject)});
+      observer.observe(document.body,{childList:true,subtree:true});});
     const leaf=app.workspace.getLeaf(true);await leaf.openFile(app.vault.getAbstractFileByPath(r.notePath));r.mdLeaf=leaf;
     return {annotations:state.annotations,pairId:r.view.annotationDocument.pairId,sha:r.pairedSha,xxh:r.pairedXxh,saveCalls:r.saveCalls};`);
   assert.equal(report.saved.annotations.length,1);assert.equal(report.saved.annotations[0].kind,'Square');assert.equal(report.saved.saveCalls,0);
   await wait(`return !!document.querySelector('.pdfReaderRectangleEmbed img');`,'real Markdown embed');
+  report.firstEmbedMs=await evaluate(`return await app.__regionNative.firstEmbedTiming;`);
+  report.firstEmbedProfile=await evaluate(`const r=app.__regionNative;r.restoreProfile.splice(0).reverse().forEach(f=>f());return r.firstProfile;`);
   report.embed=await evaluate(`const img=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(img=>img.getBoundingClientRect().width>0);await img.decode();return {width:img.naturalWidth,height:img.naturalHeight,alt:img.alt};`);
   assert.ok(report.embed.width>0&&report.embed.height>0);
   report.warmReopenMs=[];
@@ -91,11 +106,13 @@ try {
   // Close Reader completely, force the frozen-library closed-PDF rendering path.
   await evaluate(`const r=app.__regionNative;await r.view.prepareControlledClose('native-region-test');r.view.leaf.detach();
     const p=app.plugins.plugins['pdf-web-reader'];p.rectangleEmbeds.invalidate();return {readers:app.workspace.getLeavesOfType('pdf-web-reader-view').length};`);
+  report.memoryBeforeClosedCrop=await evaluate(`return await process.getProcessMemoryInfo();`);
   // New region geometry forces a cache miss after Reader teardown.
   report.closedPdf=await evaluate(`const r=app.__regionNative,p=app.plugins.plugins['pdf-web-reader'];r.savedImageWidth=${report.embed?.width || 0};const file=app.vault.getAbstractFileByPath(r.pdfPath);
     const document=await p.annotationHost.store.documentForPath(file.path);const row=JSON.parse(JSON.stringify(r.savedRows[0]));row.payload.editor.rect[2]-=5;
     await p.annotationHost.store.appendOperations({document,sourceHash:document.source.sourceHash,operations:[row]});p.rectangleEmbeds.invalidate();return {uuid:row.uuid,rect:row.payload.editor.rect};`);
   await wait(`const r=app.__regionNative;const img=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(img=>img.getBoundingClientRect().width>0);return img&&img.naturalWidth>0&&img.naturalWidth!==r.savedImageWidth?{width:img.naturalWidth,height:img.naturalHeight}:null;`,'closed PDF crop render');
+  report.memoryAfterClosedCrop=await evaluate(`return await process.getProcessMemoryInfo();`);
   const point=await evaluate(`const img=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(img=>img.getBoundingClientRect().width>0);if(!img)throw Error('Visible image unavailable');const box=img.getBoundingClientRect();const x=box.x+box.width/2,y=box.y+box.height/2;if(document.elementFromPoint(x,y)!==img)throw Error('Image hit target blocked');return {x,y};`);
   nativeCdp('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',buttons:1,clickCount:1,...point});
   nativeCdp('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',buttons:0,clickCount:1,...point});
@@ -138,9 +155,18 @@ try {
   assert.equal(report.final.sourceWrites,0);
   assert.equal(report.final.sha,report.saved.sha);assert.equal(report.final.xxh,report.saved.xxh);assert.equal(report.final.saveCalls,0);
   report.pass=true;
-} catch(error){report.error=error.stack;throw error;}
+} catch(error){report.error=error.stack;
+  if(installed) try { report.failureState=await evaluate(`const r=app.__regionNative,v=r.view,w=v?.iframe?.contentWindow;
+    return {links:r.links,mode:w?.PDFViewerApplication?.pdfViewer?.annotationEditorMode,sourceWrites:r.sourceWrites,
+      saving:v?.saving,pending:!!v?.pendingBytes,visible:document.visibilityState,focused:document.hasFocus(),
+      editors:w?.document.querySelectorAll('.squareEditor').length,inputEvents:r.inputEvents};`);
+    const screenshot=nativeCdp('Page.captureScreenshot',{format:'png'});await writeFile(path.join(output,'failure.png'),Buffer.from(screenshot.data,'base64'));
+  } catch(diagnosticError) { report.diagnosticError=diagnosticError.stack; }
+  throw error;}
 finally {
   if(installed)try {report.cleanup=await evaluate(`const r=app.__regionNative,p=app.plugins.plugins['pdf-web-reader'];
+    r.restoreProfile?.splice(0).reverse().forEach(f=>f());
+    if(r.inputProbe && r.view?.iframe?.contentWindow)for(const name of ['pointerdown','pointermove','pointerup'])r.view.iframe.contentWindow.document.removeEventListener(name,r.inputProbe,true);
     for(const leaf of app.workspace.getLeavesOfType('pdf-web-reader-view').filter(l=>l.view.documentFile?.path?.startsWith(r.directory+'/'))){await leaf.view.prepareControlledClose('native-region-cleanup');leaf.detach();}
     r.mdLeaf?.detach();p.copyReaderText=r.originalCopy;p.openPdf=r.originalOpen;app.vault.modifyBinary=r.originalModify;r.host.dispose();p.annotationHost=r.originalHost;return {restored:p.annotationHost===r.originalHost};`);}catch(error){report.cleanupError=error.stack;}
   await writeFile(path.join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({output,...report},null,2));

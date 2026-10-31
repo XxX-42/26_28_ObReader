@@ -719,10 +719,11 @@ var __PDFReaderRectangleEmbed = (() => {
         };
       }
       module.exports = { squareRegion, cropViewport, renderRegion, createRectangleEmbeds };
-      function createRectangleDocumentPool(plugin) {
-        const documents = /* @__PURE__ */ new Map(), verifiedSources = /* @__PURE__ */ new Map(), urls = [];
+      function createRectangleDocumentPool(plugin, { loadLibrary } = {}) {
+        const tasks = /* @__PURE__ */ new Set(), verifiedSources = /* @__PURE__ */ new Map(), urls = [];
         let libraryPromise = null, disposed = false;
         async function library() {
+          if (loadLibrary) return loadLibrary();
           if (!libraryPromise) libraryPromise = (async () => {
             const [pdfBytes, workerBytes, assets] = await Promise.all([
               plugin.readVerifiedAsset("build/pdf.mjs"),
@@ -772,13 +773,6 @@ var __PDFReaderRectangleEmbed = (() => {
             }
             if (borrowed && !borrowed.destroyed) return { document: borrowed, renderDocument: view.iframe.contentWindow.document, release() {
             } };
-            if (documents.has(key)) {
-              const value = documents.get(key);
-              documents.delete(key);
-              documents.set(key, value);
-              return { document: value.document, release() {
-              } };
-            }
             bytes ||= new Uint8Array(await plugin.app.vault.readBinary(target.file));
             const { pdfjs, base } = await library();
             if (disposed || signal?.aborted) throw new Error("\u533A\u57DF\u6E32\u67D3\u5DF2\u53D6\u6D88\u3002");
@@ -790,6 +784,7 @@ var __PDFReaderRectangleEmbed = (() => {
               wasmUrl: `${base}wasm/`,
               iccUrl: `${base}iccs/`
             });
+            tasks.add(task);
             const abort = () => {
               void task.destroy();
             };
@@ -797,26 +792,26 @@ var __PDFReaderRectangleEmbed = (() => {
             let document;
             try {
               document = await task.promise;
+            } catch (error) {
+              tasks.delete(task);
+              await task.destroy();
+              throw error;
             } finally {
               signal?.removeEventListener("abort", abort);
             }
             if (disposed || signal?.aborted) {
+              tasks.delete(task);
               await task.destroy();
               throw new Error("\u533A\u57DF\u6E32\u67D3\u5DF2\u53D6\u6D88\u3002");
             }
-            documents.set(key, { document, task });
-            while (documents.size > 2) {
-              const first = documents.keys().next().value, old = documents.get(first);
-              documents.delete(first);
-              await old.task.destroy();
-            }
-            return { document, release() {
+            return { document, async release() {
+              if (tasks.delete(task)) await task.destroy();
             } };
           },
           async dispose() {
             disposed = true;
-            await Promise.allSettled([...documents.values()].map((value) => value.task.destroy()));
-            documents.clear();
+            await Promise.allSettled([...tasks].map((task) => task.destroy()));
+            tasks.clear();
             verifiedSources.clear();
             for (const url of urls) URL.revokeObjectURL(url);
             urls.length = 0;

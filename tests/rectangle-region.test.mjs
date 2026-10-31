@@ -49,6 +49,19 @@ test('document pool borrows only verified matching Readers and never destroys th
   await assert.rejects(pool.acquire({}), /取消/);
 });
 
+test('closed PDF crop releases its temporary document and never caches the full PDF', async () => {
+  let created = 0, destroyed = 0, reads = 0;
+  const plugin = { app:{vault:{adapter:{stat:async()=>({mtime:1,size:3})},readBinary:async()=>{reads++;return new Uint8Array([1,2,3]);}}},
+    pdfHashRuntime:{matches:()=>true},views: [] };
+  const loadLibrary=async()=>({base:'file:///assets/',pdfjs:{getDocument(){created++;return {promise:Promise.resolve({getPage(){}}),async destroy(){destroyed++;}};}}});
+  const pool=createRectangleDocumentPool(plugin,{loadLibrary});
+  const target={file:{path:'A.pdf'},document:{documentId:'D',docKey:'K',source:{sourceHash:'verified'}}};
+  const first=await pool.acquire(target);assert.equal(created,1);assert.equal(destroyed,0);
+  await first.release();await first.release();assert.equal(destroyed,1);
+  const second=await pool.acquire(target);assert.equal(created,2);assert.ok(reads>=2);
+  await pool.dispose();assert.equal(destroyed,2);await second.release();assert.equal(destroyed,2);
+});
+
 const bridge = await readFile(new URL('../viewer-adapter/obsidian-bridge.js',import.meta.url),'utf8');
 test('saved rectangle capture survives the live editor being replaced by hydration', () => {
   const source = bridge.slice(bridge.indexOf('  function captureReaderAnchor('), bridge.indexOf('  function sendReaderAnchorCapture('));
