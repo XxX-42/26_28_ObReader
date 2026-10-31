@@ -92,7 +92,7 @@
         button.className = "pdfToolWheelPointer";
         button.type = "button";
         button.setAttribute("aria-label", "普通指针工具"); button.title = "普通指针工具";
-        button.innerHTML = '<svg viewBox="0 0 70 65" aria-hidden="true"><path class="pointerPad" d="M7 4 Q18 35 58 43 Q67 45 64 55 Q28 65 5 39 Q-2 27 4 6 Q5 3 7 4Z"/><path class="pointerGlyph" d="M24 34v16l4-4 3 7 3-1-3-7h6z"/></svg>';
+        button.innerHTML = '<svg viewBox="0 0 70 65" aria-hidden="true"><path class="pointerPad" d="M4 4 H22 A44 44 0 0 0 66 48 V61 H4 Z"/><path class="pointerGlyph" d="M15 32v21l5-5 4 9 4-2-4-9h9z"/></svg>';
         button.addEventListener("click", event => { event.preventDefault(); event.stopImmediatePropagation(); this.activatePointer(wheel); });
         wheel.element.append(button); wheel.pointerControl = button;
       }
