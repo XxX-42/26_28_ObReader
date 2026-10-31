@@ -1864,6 +1864,10 @@
       regionButton.setAttribute("aria-pressed", String(selected));
       regionButton.classList.toggle("toggled", selected);
     }
+    // Snapshot reuses Square's drawing engine, but is a separate user tool.
+    document.getElementById("editorSquareButton")?.classList.toggle(
+      "toggled", state.editorMode === 5 && !state.rectangleRegion,
+    );
     const controls = state.bridgeControls;
     if (!controls) {
       return;
@@ -3460,6 +3464,16 @@
     const regionIcon = document.createElement("span"); regionIcon.textContent = "▣";
     regionButton.append(regionIcon);
     regionButton.addEventListener("click", armRectangleRegion);
+    document.getElementById("editorSquareButton")?.addEventListener("click", event => {
+      if (!state.rectangleRegion) return;
+      // PDF.js emits no mode-changed event when both tools use mode 5.
+      // Switch their intent explicitly without letting its toggle exit drawing.
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      state.rectangleRegion = null;
+      state.app.eventBus.dispatch("switchannotationeditormode", { source: window, mode: 5, createNewEditor: false });
+      syncBridgeControls();
+    }, { capture: true, signal: state.eventAbortController.signal });
     document.getElementById("editorSquare")?.after(regionButton);
     if (!regionButton.isConnected) toolbar.prepend(regionButton);
     const statusBarButton = document.createElement("button");

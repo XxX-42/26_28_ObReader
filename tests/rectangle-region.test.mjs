@@ -126,11 +126,25 @@ test('locked snapshot rearms after save, while failed saves and document replace
 test('top snapshot button reflects its armed state independently from ordinary Square', () => {
   const attrs = {}, classes = new Set();
   const button = { setAttribute: (k,v) => attrs[k]=v, classList: { toggle(k,v) { if(v) classes.add(k); else classes.delete(k); } } };
-  const state = { readOnly:false, externalSourceConfirmed:true, rectangleRegion:null };
+  const squareClasses=new Set(['toggled']);
+  const square={classList:{toggle(k,v){if(v)squareClasses.add(k);else squareClasses.delete(k);}}};
+  const state = { editorMode:5, readOnly:false, externalSourceConfirmed:true, rectangleRegion:null };
   const source = bridge.slice(bridge.indexOf('  function syncBridgeControls()'),bridge.indexOf('  function toolbarContentWidth('));
-  const sync = new Function('state','document',`${source};return syncBridgeControls`)(state,{getElementById:()=>button});
+  const sync = new Function('state','document',`${source};return syncBridgeControls`)(state,{getElementById:id=>id==='pdfReaderRectangleRegionButton'?button:id==='editorSquareButton'?square:null});
   sync();assert.equal(attrs['aria-pressed'],'false');assert.equal(classes.has('toggled'),false);
-  state.rectangleRegion={finishing:false};sync();assert.equal(attrs['aria-pressed'],'true');assert.equal(classes.has('toggled'),true);
-  state.rectangleRegion=null;sync();assert.equal(attrs['aria-pressed'],'false');assert.equal(classes.has('toggled'),false);
+  state.rectangleRegion={finishing:false};sync();assert.equal(attrs['aria-pressed'],'true');assert.equal(classes.has('toggled'),true);assert.equal(squareClasses.has('toggled'),false);
+  state.rectangleRegion=null;sync();assert.equal(squareClasses.has('toggled'),true);assert.equal(attrs['aria-pressed'],'false');assert.equal(classes.has('toggled'),false);
   state.readOnly=true;sync();assert.equal(button.disabled,true);
+});
+
+test('switching snapshot to ordinary Square clears intent even when PDF.js mode stays 5', () => {
+  const start=bridge.indexOf('document.getElementById("editorSquareButton")?.addEventListener("click", event => {');
+  const body=bridge.slice(start,bridge.indexOf('}, { capture: true',start));
+  const callback=body.slice(body.indexOf('event => {')+'event => {'.length);
+  const events=[];let synced=0,prevented=0;
+  const state={rectangleRegion:{},app:{eventBus:{dispatch:(...args)=>events.push(args)}}};
+  const click=new Function('state','window','syncBridgeControls','event',callback);
+  click(state,{},()=>synced++,{preventDefault(){prevented++},stopImmediatePropagation(){prevented++}});
+  assert.equal(state.rectangleRegion,null);assert.equal(events[0][1].mode,5);assert.equal(synced,1);assert.equal(prevented,2);
+  click(state,{},()=>synced++,{});assert.equal(synced,1,'ordinary Square retains its native toggle');
 });
