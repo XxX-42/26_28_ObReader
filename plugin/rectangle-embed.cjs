@@ -1,6 +1,7 @@
 /* Copyright 2026 XxX-42 and contributors; SPDX-License-Identifier: Apache-2.0 */
 'use strict';
 const { parseReaderLinkFragment } = require('./reader-anchor-store.cjs');
+const { createRegionImageCache } = require('./region-image-cache.cjs');
 
 function squareRegion(row) {
   const editor = row?.payload?.editor;
@@ -79,6 +80,7 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
   if (typeof registry?.embedByExtension?.pdf !== 'function' || typeof Component !== 'function') return null;
   const original = registry.embedByExtension.pdf;
   const components = new Set(), cache = new Map();
+  const diskCache = createRegionImageCache(plugin.app.vault?.adapter?.basePath || plugin.app.vault?.getName?.() || '');
   const resolving = new Map(), resolvedTargets = new Map();
   let resolutionGeneration = 0;
   let disposed = false, queue = Promise.resolve(), cachedBytes = 0;
@@ -166,6 +168,9 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
         const result = await enqueue(async () => {
           if (!current()) throw new Error('区域渲染已取消。');
           if (cache.has(key)) { const value = cache.get(key); cache.delete(key); cache.set(key, value); return value; }
+          const savedImage = await diskCache.get(key);
+          if (!current()) throw new Error('区域渲染已取消。');
+          if (savedImage) { remember(key,savedImage); return savedImage; }
           const lease = await acquireDocument(target, signal);
           try {
             if (!current()) throw new Error('区域渲染已取消。');
@@ -173,7 +178,7 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
             const options = { document: lease.renderDocument || this.containerEl.ownerDocument,
               pixelRatio: this.containerEl.ownerDocument.defaultView?.devicePixelRatio || 1, signal };
             const image = await cropRenderedPage(page, region.rect, lease.renderedPage?.(region.pageIndex), options) || await renderRegion(page, region.rect, options);
-            if (current()) remember(key, image); return image;
+            if (current()) { remember(key, image); void diskCache.put(key,image); } return image;
           } finally { await lease.release?.(); }
         });
         if (!current()) return;
@@ -224,6 +229,7 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
     invalidate(path) { ++resolutionGeneration; resolvedTargets.clear(); for (const component of components) component.invalidate(path); },
     dispose() {
       disposed = true;
+      diskCache.dispose();
       if (registry.embedByExtension.pdf === wrapper) registry.embedByExtension.pdf = original;
       for (const component of [...components]) component.unload(); cache.clear(); resolving.clear(); resolvedTargets.clear(); cachedBytes = 0;
     },

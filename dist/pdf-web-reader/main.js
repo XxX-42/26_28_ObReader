@@ -428,10 +428,69 @@ var __PDFReaderRectangleEmbed = (() => {
     }
   });
 
+  // plugin/region-image-cache.cjs
+  var require_region_image_cache = __commonJS({
+    "plugin/region-image-cache.cjs"(exports, module) {
+      "use strict";
+      function createRegionImageCache(namespace, storage = globalThis.caches) {
+        let disposed = false;
+        let writes = Promise.resolve();
+        async function request(key) {
+          const bytes = new TextEncoder().encode(JSON.stringify([namespace, key]));
+          const hash = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+          const id = [...new Uint8Array(hash)].map((x) => x.toString(16).padStart(2, "0")).join("");
+          return new Request(`https://obreader.invalid/region-cache/${id}`);
+        }
+        return {
+          async get(key) {
+            if (disposed || !storage) return null;
+            try {
+              const response = await (await storage.open("obreader-cropped-regions-v1")).match(await request(key));
+              if (!response || disposed) return null;
+              const width = Number(response.headers.get("x-width")), height = Number(response.headers.get("x-height")), cssWidth = Number(response.headers.get("x-css-width"));
+              const blob = await response.blob();
+              if (!blob.size || blob.size > 32 * 1024 * 1024 || ![width, height, cssWidth].every((x) => Number.isFinite(x) && x > 0) || width * height > 4005e3) return null;
+              return { blob, width, height, cssWidth };
+            } catch {
+              return null;
+            }
+          },
+          async put(key, result) {
+            if (disposed || !storage || result.blob.size > 32 * 1024 * 1024) return;
+            const next = writes.then(async () => {
+              try {
+                const cache = await storage.open("obreader-cropped-regions-v1"), req = await request(key);
+                if (disposed) return;
+                await cache.delete(req);
+                await cache.put(req, new Response(result.blob, { headers: { "content-type": "image/png", "x-bytes": String(result.blob.size), "x-width": String(result.width), "x-height": String(result.height), "x-css-width": String(result.cssWidth) } }));
+                const keys = await cache.keys();
+                let bytes = 0;
+                for (let i = keys.length - 1; i >= 0; i--) {
+                  const response = await cache.match(keys[i]);
+                  bytes += Number(response?.headers.get("x-bytes")) || 32 * 1024 * 1024;
+                  if (keys.length - i > 16 || bytes > 32 * 1024 * 1024) await cache.delete(keys[i]);
+                }
+              } catch {
+              }
+            });
+            writes = next.catch(() => {
+            });
+            return next;
+          },
+          dispose() {
+            disposed = true;
+          }
+        };
+      }
+      module.exports = { createRegionImageCache };
+    }
+  });
+
   // plugin/rectangle-embed.cjs
   var require_rectangle_embed = __commonJS({
     "plugin/rectangle-embed.cjs"(exports, module) {
       var { parseReaderLinkFragment } = require_reader_anchor_store();
+      var { createRegionImageCache } = require_region_image_cache();
       function squareRegion(row) {
         const editor = row?.payload?.editor;
         const rect = editor?.rect;
@@ -535,6 +594,7 @@ var __PDFReaderRectangleEmbed = (() => {
         if (typeof registry?.embedByExtension?.pdf !== "function" || typeof Component !== "function") return null;
         const original = registry.embedByExtension.pdf;
         const components = /* @__PURE__ */ new Set(), cache = /* @__PURE__ */ new Map();
+        const diskCache = createRegionImageCache(plugin.app.vault?.adapter?.basePath || plugin.app.vault?.getName?.() || "");
         const resolving = /* @__PURE__ */ new Map(), resolvedTargets = /* @__PURE__ */ new Map();
         let resolutionGeneration = 0;
         let disposed = false, queue = Promise.resolve(), cachedBytes = 0;
@@ -660,6 +720,12 @@ var __PDFReaderRectangleEmbed = (() => {
                   cache.set(key, value);
                   return value;
                 }
+                const savedImage = await diskCache.get(key);
+                if (!current()) throw new Error("\u533A\u57DF\u6E32\u67D3\u5DF2\u53D6\u6D88\u3002");
+                if (savedImage) {
+                  remember(key, savedImage);
+                  return savedImage;
+                }
                 const lease = await acquireDocument(target, signal);
                 try {
                   if (!current()) throw new Error("\u533A\u57DF\u6E32\u67D3\u5DF2\u53D6\u6D88\u3002");
@@ -670,7 +736,10 @@ var __PDFReaderRectangleEmbed = (() => {
                     signal
                   };
                   const image2 = await cropRenderedPage(page, region.rect, lease.renderedPage?.(region.pageIndex), options) || await renderRegion(page, region.rect, options);
-                  if (current()) remember(key, image2);
+                  if (current()) {
+                    remember(key, image2);
+                    void diskCache.put(key, image2);
+                  }
                   return image2;
                 } finally {
                   await lease.release?.();
@@ -737,6 +806,7 @@ var __PDFReaderRectangleEmbed = (() => {
           },
           dispose() {
             disposed = true;
+            diskCache.dispose();
             if (registry.embedByExtension.pdf === wrapper) registry.embedByExtension.pdf = original;
             for (const component of [...components]) component.unload();
             cache.clear();

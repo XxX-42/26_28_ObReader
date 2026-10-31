@@ -100,6 +100,10 @@ try {
   report.sourceProof=await evaluate(`const r=app.__regionNative,v=r.view,stat=await app.vault.adapter.stat(v.documentFile.path),s=v.annotationDocument.source;return {proof:r.host.isVerifiedReaderSource?.(v,stat),stat,hash:v.annotationSourceHash,source:{hash:s?.sourceHash,mtime:s?.mtime,size:s?.size}};`);
   report.embed=await evaluate(`const img=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(img=>img.getBoundingClientRect().width>0);await img.decode();const blob=await (await fetch(img.src)).blob();return {width:img.naturalWidth,height:img.naturalHeight,alt:img.alt,encodedBytes:blob.size,rawRgbaBytes:img.naturalWidth*img.naturalHeight*4};`);
   assert.ok(report.embed.width>0&&report.embed.height>0);
+  report.persistedCrop=await wait(`const r=app.__regionNative,d=r.view.annotationDocument,row=r.savedRows[0],stat=await app.vault.adapter.stat(r.pdfPath);
+    const key=JSON.stringify([d.documentId,d.source.sourceHash,stat.mtime+':'+stat.size,row.uuid,row.pageIndex,row.payload.editor.rect,Math.min(2,devicePixelRatio||1)]);
+    const {createRegionImageCache}=require(${JSON.stringify(path.join(root,'plugin/region-image-cache.cjs'))});
+    const cached=await createRegionImageCache(app.vault.adapter.basePath).get(key);return cached?{bytes:cached.blob.size,width:cached.width,height:cached.height}:null;`,'persisted cropped PNG');
   report.warmReopenMs=[];
   for(let i=0;i<5;i++) {
     await evaluate(`const r=app.__regionNative;await r.mdLeaf.setViewState({type:'markdown',state:{file:r.notePath,mode:'source',source:true}});return true;`);
