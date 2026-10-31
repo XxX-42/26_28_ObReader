@@ -246,6 +246,10 @@ function createRectangleDocumentPool(plugin, { loadLibrary } = {}) {
       const stat = await plugin.app.vault.adapter.stat(target.file.path);
       const key = JSON.stringify([target.document.documentId, target.sourceHash, target.file.path, stat?.mtime, stat?.size]);
       let bytes;
+      if (borrowed && !borrowed.destroyed && plugin.annotationHost?.isVerifiedReaderSource?.(view, stat) === true &&
+          view.annotationSourceHash === target.document.source?.sourceHash) {
+        return { document: borrowed, renderDocument: view.iframe.contentWindow.document, release() {} };
+      }
       if (!verifiedSources.has(key)) {
         bytes = new Uint8Array(await plugin.app.vault.readBinary(target.file));
         const expected = [target.document.source?.sourceHash, target.document.pairing?.pairedSha256].filter(Boolean);

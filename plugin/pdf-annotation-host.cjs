@@ -1441,6 +1441,15 @@ function createPdfAnnotationHost({
 
   return {
     store,
+    isVerifiedReaderSource(view, stat) {
+      const doc = view?.annotationDocument, state = sourceStates.get(doc?.documentId);
+      const physical = state?.physicalSource || state?.source;
+      return !!(state && physical && stat && view.annotationHydrationAllowed === true &&
+        view.annotationSourceMismatch !== true && state.file === view.documentFile &&
+        state.path === view.documentFile?.path && app.vault.getAbstractFileByPath(state.path) === state.file &&
+        Number.isFinite(physical.mtime) && stat.mtime === physical.mtime && stat.size === physical.size &&
+        view.annotationSourceHash === state.source?.sourceHash);
+    },
     initializeView,
     handleMessage,
     handleSidecarChange,

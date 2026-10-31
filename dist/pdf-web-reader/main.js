@@ -756,6 +756,10 @@ var __PDFReaderRectangleEmbed = (() => {
             const stat = await plugin.app.vault.adapter.stat(target.file.path);
             const key = JSON.stringify([target.document.documentId, target.sourceHash, target.file.path, stat?.mtime, stat?.size]);
             let bytes;
+            if (borrowed && !borrowed.destroyed && plugin.annotationHost?.isVerifiedReaderSource?.(view, stat) === true && view.annotationSourceHash === target.document.source?.sourceHash) {
+              return { document: borrowed, renderDocument: view.iframe.contentWindow.document, release() {
+              } };
+            }
             if (!verifiedSources.has(key)) {
               bytes = new Uint8Array(await plugin.app.vault.readBinary(target.file));
               const expected = [target.document.source?.sourceHash, target.document.pairing?.pairedSha256].filter(Boolean);
@@ -37806,6 +37810,11 @@ ${entry.actorId || "legacy"}`
         }
         return {
           store,
+          isVerifiedReaderSource(view, stat) {
+            const doc = view?.annotationDocument, state = sourceStates.get(doc?.documentId);
+            const physical = state?.physicalSource || state?.source;
+            return !!(state && physical && stat && view.annotationHydrationAllowed === true && view.annotationSourceMismatch !== true && state.file === view.documentFile && state.path === view.documentFile?.path && app.vault.getAbstractFileByPath(state.path) === state.file && Number.isFinite(physical.mtime) && stat.mtime === physical.mtime && stat.size === physical.size && view.annotationSourceHash === state.source?.sourceHash);
+          },
           initializeView,
           handleMessage,
           handleSidecarChange,

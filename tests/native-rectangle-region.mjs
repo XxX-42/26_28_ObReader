@@ -34,6 +34,7 @@ try {
     const vault=new Proxy(app.vault,{get(target,key){if(key==='adapter')return adapter;
       const value=target[key];return typeof value==='function'?value.bind(target):value;}});
     const scopedApp=new Proxy(app,{get(target,key){if(key==='vault')return vault;const value=target[key];return typeof value==='function'?value.bind(target):value;}});
+    delete require.cache[require.resolve(${JSON.stringify(source)})];
     const {createPdfAnnotationHost}=require(${JSON.stringify(source)});
     r.host=createPdfAnnotationHost({app:scopedApp,enableJsonl:true,enableSingleJsonl:true,
       hashRuntime:p.pdfHashRuntime,identityHash:bytes=>'sha256-v1:'+require('crypto').createHash('sha256').update(bytes).digest('hex'),
@@ -96,6 +97,7 @@ try {
   await wait(`return !!document.querySelector('.pdfReaderRectangleEmbed img');`,'real Markdown embed');
   report.firstEmbedMs=await evaluate(`return await app.__regionNative.firstEmbedTiming;`);
   report.firstEmbedProfile=await evaluate(`const r=app.__regionNative;r.restoreProfile.splice(0).reverse().forEach(f=>f());return r.firstProfile;`);
+  report.sourceProof=await evaluate(`const r=app.__regionNative,v=r.view,stat=await app.vault.adapter.stat(v.documentFile.path),s=v.annotationDocument.source;return {proof:r.host.isVerifiedReaderSource?.(v,stat),stat,hash:v.annotationSourceHash,source:{hash:s?.sourceHash,mtime:s?.mtime,size:s?.size}};`);
   report.embed=await evaluate(`const img=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(img=>img.getBoundingClientRect().width>0);await img.decode();const blob=await (await fetch(img.src)).blob();return {width:img.naturalWidth,height:img.naturalHeight,alt:img.alt,encodedBytes:blob.size,rawRgbaBytes:img.naturalWidth*img.naturalHeight*4};`);
   assert.ok(report.embed.width>0&&report.embed.height>0);
   report.warmReopenMs=[];

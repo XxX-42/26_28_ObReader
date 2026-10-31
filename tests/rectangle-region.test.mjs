@@ -62,6 +62,19 @@ test('closed PDF crop releases its temporary document and never caches the full 
   await pool.dispose();assert.equal(destroyed,2);await second.release();assert.equal(destroyed,2);
 });
 
+test('a matching live Reader with a Host source proof avoids a second full PDF read', async () => {
+  let reads=0,proofs=0;
+  const document={getPage(){}};
+  const view={annotationHydrationAllowed:true,annotationSourceHash:'verified',annotationDocument:{documentId:'D',docKey:'K'},
+    documentFile:{path:'A.pdf'},iframe:{contentWindow:{PDFViewerApplication:{pdfDocument:document}}}};
+  const plugin={views:[view],annotationHost:{isVerifiedReaderSource(v,stat){proofs++;return v===view&&stat.mtime===1;}},
+    app:{vault:{adapter:{stat:async()=>({mtime:1,size:3})},readBinary:async()=>{reads++;return new Uint8Array([1,2,3]);}}},pdfHashRuntime:{matches:()=>true}};
+  const pool=createRectangleDocumentPool(plugin),target={file:{path:'A.pdf'},document:{documentId:'D',docKey:'K',source:{sourceHash:'verified'}}};
+  assert.equal((await pool.acquire(target)).document,document);assert.equal(reads,0);assert.equal(proofs,1);
+  plugin.annotationHost.isVerifiedReaderSource=()=>false;
+  await pool.acquire(target);assert.equal(reads,1,'unverified source still requires full read and hash');await pool.dispose();
+});
+
 const bridge = await readFile(new URL('../viewer-adapter/obsidian-bridge.js',import.meta.url),'utf8');
 test('saved rectangle capture survives the live editor being replaced by hydration', () => {
   const source = bridge.slice(bridge.indexOf('  function captureReaderAnchor('), bridge.indexOf('  function sendReaderAnchorCapture('));
