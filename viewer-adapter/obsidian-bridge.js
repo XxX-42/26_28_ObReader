@@ -2173,6 +2173,11 @@
     return groupSidebarSentenceBoxes(items);
   }
 
+  function clampAnnotationSidebarWidth(width, viewportWidth) {
+    const maximum = Math.max(0, Math.floor(viewportWidth * 0.7));
+    return Math.max(Math.min(240, maximum), Math.min(maximum, Math.round(width)));
+  }
+
   function createAnnotationSidebarController({
     button,
     menu,
@@ -2195,6 +2200,34 @@
     dockButton.textContent = "停靠右侧";
     dockButton.title = "将批注面板停靠在阅读区右侧";
     closeButton.before(dockButton);
+    const resizeHandle = document.createElement("div");
+    resizeHandle.className = "pdfReaderAnnotationResizeHandle";
+    resizeHandle.setAttribute("role", "separator");
+    resizeHandle.setAttribute("aria-label", "拖动调整批注侧栏宽度");
+    resizeHandle.setAttribute("aria-orientation", "vertical");
+    menu.append(resizeHandle);
+    let resizePointer = null;
+    function onResizeDown(event) {
+      if (!open || !docked || event.button !== 0) return;
+      event.preventDefault();
+      resizePointer = event.pointerId;
+      resizeHandle.setPointerCapture?.(event.pointerId);
+    }
+    function onResizeMove(event) {
+      if (resizePointer !== event.pointerId) return;
+      const width = clampAnnotationSidebarWidth(window.innerWidth - event.clientX, window.innerWidth);
+      document.documentElement.style.setProperty("--pdf-reader-annotation-sidebar-width", `${width}px`);
+      window.dispatchEvent(new Event("resize"));
+    }
+    function onResizeEnd(event) {
+      if (resizePointer !== event.pointerId) return;
+      resizePointer = null;
+      if (resizeHandle.hasPointerCapture?.(event.pointerId)) resizeHandle.releasePointerCapture(event.pointerId);
+    }
+    resizeHandle.addEventListener("pointerdown", onResizeDown);
+    resizeHandle.addEventListener("pointermove", onResizeMove);
+    resizeHandle.addEventListener("pointerup", onResizeEnd);
+    resizeHandle.addEventListener("pointercancel", onResizeEnd);
     function syncDock() {
       document.documentElement.classList.toggle("pdfReaderAnnotationsDocked", open && docked);
       menu.classList.toggle("pdfReaderAnnotationSidebarDocked", docked);
@@ -2613,6 +2646,12 @@
       createReviewDraft,
       dispose() {
         closeAndClear();
+        resizeHandle.removeEventListener("pointerdown", onResizeDown);
+        resizeHandle.removeEventListener("pointermove", onResizeMove);
+        resizeHandle.removeEventListener("pointerup", onResizeEnd);
+        resizeHandle.removeEventListener("pointercancel", onResizeEnd);
+        resizeHandle.remove();
+        document.documentElement.style.removeProperty("--pdf-reader-annotation-sidebar-width");
         dockButton.removeEventListener("click", onDockClick);
         dockButton.remove();
         document.removeEventListener("pointerdown", onOutsidePointerDown, true);

@@ -622,7 +622,7 @@ body {
 .pdfReaderAnnotationSidebarMenu.pdfReaderAnnotationSidebarDocked:not(.hidden) {
   position: fixed !important;
   inset: var(--toolbar-height, 40px) 0 0 auto !important;
-  width: min(360px, 42vw);
+  width: min(var(--pdf-reader-annotation-sidebar-width, 360px), 70vw);
   min-width: 0;
   max-height: none;
   border-radius: 0;
@@ -634,7 +634,20 @@ body {
   max-height: 100%;
 }
 .pdfReaderAnnotationsDocked #viewerContainer {
-  inset-inline-end: min(360px, 42vw) !important;
+  inset-inline-end: min(var(--pdf-reader-annotation-sidebar-width, 360px), 70vw) !important;
+}
+.pdfReaderAnnotationResizeHandle { display: none; }
+.pdfReaderAnnotationSidebarDocked .pdfReaderAnnotationResizeHandle {
+  display: block;
+  position: absolute;
+  inset: 0 auto 0 -5px;
+  width: 10px;
+  z-index: 2;
+  cursor: col-resize;
+  touch-action: none;
+}
+.pdfReaderAnnotationSidebarDocked .pdfReaderAnnotationResizeHandle:hover {
+  background: color-mix(in srgb, var(--interactive-accent, #418dcc) 30%, transparent);
 }
 
 #editorCommentsSidebarResizer {
