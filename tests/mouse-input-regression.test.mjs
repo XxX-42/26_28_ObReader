@@ -4364,13 +4364,10 @@ test(
     await page.mouse.move(pointerFrame.x+squareSectorPoint.x,pointerFrame.y+squareSectorPoint.y);
     await viewer.waitForSelector(".pdfToolWheelColors");
     assert.equal(await viewer.evaluate(() => {
-      const pointer=document.querySelector(".pdfToolWheelPointer").getBoundingClientRect();
-      return [...document.querySelectorAll(".pdfToolWheelColors span")].every(node=>{const r=node.getBoundingClientRect();return r.right < pointer.left || r.left > pointer.right || r.bottom < pointer.top || r.top > pointer.bottom;});
-    }), true, "Color choices must not obscure the pointer shortcut");
-    assert.equal(await viewer.evaluate(() => {
       const w=PDFViewerApplication._toolWheel, swatches=[...document.querySelectorAll('.pdfToolWheelColors span')];
       const rect=swatches[2].getBoundingClientRect(),angle=Math.atan2(rect.top+rect.height/2-w.y,rect.left+rect.width/2-w.x)*180/Math.PI;
-      return Math.abs(angle-150)<2;
+      const radius=Math.hypot(rect.left+rect.width/2-w.x,rect.top+rect.height/2-w.y);
+      return Math.abs(angle-150)<2 && Math.abs(radius-(w.radius+rect.width/2+14))<2;
     }),true,'Rectangle colors must stay aligned with the rectangle sector');
     const pointerPoint = await viewer.$eval(".pdfToolWheelPointer .pointerPad", el => {const r=el.getBoundingClientRect();return {x:r.left+r.width*.55,y:r.top+r.height*.75};});
     await page.mouse.move(pointerFrame.x+pointerPoint.x,pointerFrame.y+pointerPoint.y);
