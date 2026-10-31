@@ -119,6 +119,11 @@ try {
   // Close Reader completely, force the frozen-library closed-PDF rendering path.
   await evaluate(`const r=app.__regionNative;await r.view.prepareControlledClose('native-region-test');r.view.leaf.detach();
     const p=app.plugins.plugins['pdf-web-reader'];p.rectangleEmbeds.invalidate();return {readers:app.workspace.getLeavesOfType('pdf-web-reader-view').length};`);
+  await wait(`return [...document.querySelectorAll('.pdfReaderRectangleEmbed img')].some(x=>x.getBoundingClientRect().width>0&&x.complete);`,'closed Reader existing crop');
+  report.closedReaderCachedMs=await evaluate(`const p=app.plugins.plugins['pdf-web-reader'],t=performance.now(),old=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(x=>x.getBoundingClientRect().width>0)?.src;
+    const done=new Promise((resolve,reject)=>{const timer=setTimeout(()=>{observer.disconnect();reject(Error('closed crop timing timeout'))},10000);
+      const observer=new MutationObserver(()=>{const img=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(x=>x.getBoundingClientRect().width>0&&x.src!==old);if(!img)return;observer.disconnect();img.decode().then(()=>{clearTimeout(timer);resolve(performance.now()-t)},reject)});observer.observe(document.body,{childList:true,subtree:true});});
+    p.rectangleEmbeds.invalidate();return await done;`);
   report.memoryBeforeClosedCrop=await evaluate(`return await process.getProcessMemoryInfo();`);
   // New region geometry forces a cache miss after Reader teardown.
   report.closedPdf=await evaluate(`const r=app.__regionNative,p=app.plugins.plugins['pdf-web-reader'];r.savedImageWidth=${report.embed?.width || 0};const file=app.vault.getAbstractFileByPath(r.pdfPath);
