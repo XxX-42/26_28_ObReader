@@ -4360,6 +4360,7 @@ test(
     await page.mouse.move(pointerFrame.x+pointerWheelPoint.x,pointerFrame.y+pointerWheelPoint.y);
     await page.mouse.down({button:"middle"});
     await viewer.waitForSelector(".pdfToolWheelPointer");
+    assert.equal(await viewer.evaluate(()=>Math.abs(PDFViewerApplication._toolWheel.radius-86.4)<0.01),true,'Wheel geometry and hit radius scale together to 90%');
     const squareSectorPoint = await viewer.evaluate(() => { const w=PDFViewerApplication._toolWheel;return {x:w.x+Math.cos(Math.PI*5/6)*w.radius*.7,y:w.y+Math.sin(Math.PI*5/6)*w.radius*.7}; });
     await page.mouse.move(pointerFrame.x+squareSectorPoint.x,pointerFrame.y+squareSectorPoint.y);
     await viewer.waitForSelector(".pdfToolWheelColors");
@@ -4367,7 +4368,7 @@ test(
       const w=PDFViewerApplication._toolWheel, swatches=[...document.querySelectorAll('.pdfToolWheelColors span')];
       const rect=swatches[2].getBoundingClientRect(),angle=Math.atan2(rect.top+rect.height/2-w.y,rect.left+rect.width/2-w.x)*180/Math.PI;
       const radius=Math.hypot(rect.left+rect.width/2-w.x,rect.top+rect.height/2-w.y);
-      return Math.abs(angle-150)<2 && Math.abs(radius-(w.radius+rect.width/2+14))<2;
+      return Math.abs(angle-150)<2 && Math.abs(radius-(w.radius+rect.width/2+12.6))<2;
     }),true,'Rectangle colors must stay aligned with the rectangle sector');
     const pointerPoint = await viewer.$eval(".pdfToolWheelPointer .pointerPad", el => {const r=el.getBoundingClientRect();return {x:r.left+r.width*.55,y:r.top+r.height*.75};});
     await page.mouse.move(pointerFrame.x+pointerPoint.x,pointerFrame.y+pointerPoint.y);

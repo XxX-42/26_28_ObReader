@@ -87,6 +87,15 @@
     }
 
     decorate(wheel) {
+      if (!wheel.bridgeScaled) {
+        wheel.radius *= 0.9;
+        wheel.element.style.width = `${wheel.radius * 2}px`;
+        wheel.element.style.height = `${wheel.radius * 2}px`;
+        wheel.element.style.setProperty('--tool-wheel-scale', wheel.radius / 120);
+        wheel.element.style.left = `${wheel.x - wheel.radius}px`;
+        wheel.element.style.top = `${wheel.y - wheel.radius}px`;
+        wheel.bridgeScaled = true;
+      }
       if (!wheel.pointerControl && this.activatePointer) {
         const button = wheel.element.ownerDocument.createElement("button");
         button.className = "pdfToolWheelPointer";
@@ -98,7 +107,7 @@
       }
 
       if (!wheel.colorLayoutPositioned) {
-        const margin = 40;
+        const margin = 36;
         const maxRadius = Math.min(this.host.innerWidth, this.host.innerHeight) / 2 - margin;
         // Existing wheel geometry remains intact; in very small windows the
         // arc is fitted by show() without changing the sector geometry.
@@ -133,7 +142,7 @@
         const gradient = end <= 360
           ? `transparent 0deg ${start}deg, ${color} ${start}deg ${end}deg, transparent ${end}deg 360deg`
           : `${color} 0deg ${end - 360}deg, transparent ${end - 360}deg ${start}deg, ${color} ${start}deg 360deg`;
-        ring.style.cssText = `position:absolute;inset:-5px;border-radius:50%;pointer-events:none;background:conic-gradient(${gradient});mask:radial-gradient(circle closest-side,transparent calc(100% - 5px),#000 calc(100% - 5px));-webkit-mask:radial-gradient(circle closest-side,transparent calc(100% - 5px),#000 calc(100% - 5px))`;
+        ring.style.cssText = `position:absolute;inset:-4.5px;border-radius:50%;pointer-events:none;background:conic-gradient(${gradient});mask:radial-gradient(circle closest-side,transparent calc(100% - 4.5px),#000 calc(100% - 4.5px));-webkit-mask:radial-gradient(circle closest-side,transparent calc(100% - 4.5px),#000 calc(100% - 4.5px))`;
       });
     }
 
@@ -150,18 +159,18 @@
       // The palette may extend outside the wheel without clipping.
       // Clamp its center to the viewport, including narrow/small windows.
       const angle = (item.startAngle + item.endAngle) * Math.PI / 360;
-      const diameter = Math.max(14, Math.min(26, (Math.max(this.host.innerWidth, this.host.innerHeight) - 16) / 5));
+      const diameter = 0.9 * Math.max(14, Math.min(26, (Math.max(this.host.innerWidth, this.host.innerHeight) - 16) / 5));
       // Place the five centres on the same circle around the wheel. Rotate
       // the arc inward near viewport edges, retaining a circular layout.
       const preferred = angle;
       const half = diameter / 2;
       let positions = null;
-      for (let radius = wheel.radius + half + 14; radius >= 0 && !positions; radius -= 2) {
+      for (let radius = wheel.radius + half + 12.6; radius >= 0 && !positions; radius -= 2) {
         for (let step = 0; step <= 180 && !positions; step++) {
           for (const direction of step ? [1, -1] : [1]) {
             const middle = preferred + direction * step * Math.PI / 180;
             const points = colors.map((_, i) => {
-              const spacing = Math.max(0.28, 2 * Math.asin(Math.min(1, (diameter + 2) / (2 * Math.max(radius, 1)))));
+              const spacing = Math.max(0.28, 2 * Math.asin(Math.min(1, (diameter + 1.8) / (2 * Math.max(radius, 1)))));
               const theta = middle + (i - 2) * spacing;
               return { x: wheel.x + radius * Math.cos(theta), y: wheel.y + radius * Math.sin(theta) };
             });
@@ -176,7 +185,7 @@
         swatch.dataset.color = color;
         swatch.setAttribute("role", "img");
         swatch.setAttribute("aria-label", `${item.label}颜色 ${color}`);
-        swatch.style.cssText = `position:absolute;left:${positions[index].x - (wheel.x - wheel.radius) - half}px;top:${positions[index].y - (wheel.y - wheel.radius) - half}px;display:block;box-sizing:border-box;width:${diameter}px;height:${diameter}px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 0 0 1px #333`;
+        swatch.style.cssText = `position:absolute;left:${positions[index].x - (wheel.x - wheel.radius) - half}px;top:${positions[index].y - (wheel.y - wheel.radius) - half}px;display:block;box-sizing:border-box;width:${diameter}px;height:${diameter}px;border-radius:50%;background:${color};border:1.8px solid white;box-shadow:0 0 0 1px #333`;
         element.append(swatch);
         return swatch;
       });
