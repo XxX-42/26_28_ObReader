@@ -476,7 +476,8 @@ var __PDFReaderRectangleEmbed = (() => {
       } }) {
         if (signal?.aborted) throw new Error("\u533A\u57DF\u6E32\u67D3\u5DF2\u53D6\u6D88\u3002");
         const crop = cropViewport(page, rect, pixelRatio);
-        const canvas = document.createElement("canvas");
+        const Offscreen = document.defaultView?.OffscreenCanvas;
+        const canvas = typeof Offscreen?.prototype?.convertToBlob === "function" ? new Offscreen(crop.width, crop.height) : document.createElement("canvas");
         canvas.width = crop.width;
         canvas.height = crop.height;
         const task = page.render({
@@ -492,7 +493,7 @@ var __PDFReaderRectangleEmbed = (() => {
         try {
           await task.promise;
           if (signal?.aborted) throw new Error("\u533A\u57DF\u6E32\u67D3\u5DF2\u53D6\u6D88\u3002");
-          const blob = await new Promise((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("\u65E0\u6CD5\u751F\u6210\u533A\u57DF\u56FE\u7247\u3002")), "image/png"));
+          const blob = typeof canvas.convertToBlob === "function" ? await canvas.convertToBlob({ type: "image/png" }) : await new Promise((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("\u65E0\u6CD5\u751F\u6210\u533A\u57DF\u56FE\u7247\u3002")), "image/png"));
           return { blob, cssWidth: crop.cssWidth, width: crop.width, height: crop.height };
         } finally {
           signal?.removeEventListener("abort", cancel);

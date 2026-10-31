@@ -36,7 +36,9 @@ function cropViewport(page, rect, pixelRatio = 1) {
 async function renderRegion(page, rect, { document, pixelRatio = 1, signal, onTask = () => {} }) {
   if (signal?.aborted) throw new Error('区域渲染已取消。');
   const crop = cropViewport(page, rect, pixelRatio);
-  const canvas = document.createElement('canvas');
+  const Offscreen = document.defaultView?.OffscreenCanvas;
+  const canvas = typeof Offscreen?.prototype?.convertToBlob === 'function'
+    ? new Offscreen(crop.width, crop.height) : document.createElement('canvas');
   canvas.width = crop.width; canvas.height = crop.height;
   const task = page.render({ canvasContext: canvas.getContext('2d'), viewport: crop.viewport,
     transform: [1, 0, 0, 1, -crop.x, -crop.y], annotationMode: 0, background: 'rgb(255,255,255)' });
@@ -46,7 +48,8 @@ async function renderRegion(page, rect, { document, pixelRatio = 1, signal, onTa
   try {
     await task.promise;
     if (signal?.aborted) throw new Error('区域渲染已取消。');
-    const blob = await new Promise((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('无法生成区域图片。')), 'image/png'));
+    const blob = typeof canvas.convertToBlob === 'function' ? await canvas.convertToBlob({ type: 'image/png' })
+      : await new Promise((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('无法生成区域图片。')), 'image/png'));
     return { blob, cssWidth: crop.cssWidth, width: crop.width, height: crop.height };
   } finally {
     signal?.removeEventListener('abort', cancel); onTask(null); canvas.width = canvas.height = 0;
