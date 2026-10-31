@@ -50,8 +50,23 @@
       pin.addEventListener('click', () => { this.explicit = !this.explicit; this.syncPin(); if (!this.explicit) this.setOpen(false); }, { signal });
       close.addEventListener('click', () => { this.explicit = false; this.syncPin(); this.setOpen(false); }, { signal });
       if (this.hoverCapable) {
-        root.addEventListener('pointerenter', event => { if (event.pointerType === 'touch') return; clearTimeout(this.timer); this.timer = null; if (this.panel.hidden) { this.edgeY = event.clientY; this.setOpen(true); } }, { signal });
-        root.addEventListener('pointerleave', () => { clearTimeout(this.timer); this.timer = null; if (!this.explicit) this.timer = setTimeout(() => { this.timer = null; this.setOpen(false); }, 50); }, { signal });
+        let enteredFromOutside = false;
+        const cancelExternal = () => { clearTimeout(this.externalEntryTimer); this.externalEntryTimer = null; };
+        const openForPointer = event => {
+          if (!this.panel.hidden || this.explicit) return;
+          this.edgeY = event.clientY;
+          if (!enteredFromOutside) { this.setOpen(true); return; }
+          if (this.externalEntryTimer) return;
+          this.externalEntryTimer = setTimeout(() => {
+            this.externalEntryTimer = null; enteredFromOutside = false;
+            if (this.current() && !this.explicit) this.setOpen(true);
+          }, 200);
+        };
+        document.addEventListener('pointerover', event => {
+          if (event.pointerType === 'mouse' && !event.relatedTarget) enteredFromOutside = true;
+        }, { signal, capture: true });
+        root.addEventListener('pointerenter', event => { if (event.pointerType === 'touch') return; clearTimeout(this.timer); this.timer = null; openForPointer(event); }, { signal });
+        root.addEventListener('pointerleave', () => { cancelExternal(); enteredFromOutside = false; clearTimeout(this.timer); this.timer = null; if (!this.explicit) this.timer = setTimeout(() => { this.timer = null; this.setOpen(false); }, 50); }, { signal });
         document.addEventListener('pointermove', event => {
           if (event.pointerType !== 'mouse' || !this.current()) return;
           const viewer = document.getElementById('viewerContainer');
@@ -61,18 +76,19 @@
           const atEdge = (rightSide ? event.clientX >= rect.right - 28 && event.clientX <= rect.right : event.clientX >= rect.left && event.clientX <= rect.left + 28) && event.clientY >= rect.top && event.clientY <= rect.bottom;
           if (atEdge) {
             clearTimeout(this.timer); this.timer = null;
-            if (!this.explicit && this.panel.hidden) {
-              this.edgeY = event.clientY;
-              this.setOpen(true);
-            }
+            openForPointer(event);
           }
-          else if (!this.panel.hidden && !this.explicit && !root.contains(event.target) && !this.timer) {
+          else if (!root.contains(event.target)) {
+            cancelExternal(); enteredFromOutside = false;
+            if (!this.panel.hidden && !this.explicit && !this.timer) {
             this.timer = setTimeout(() => { this.timer = null; if (!this.explicit) this.setOpen(false); }, 50);
+            }
           }
         }, { signal, passive: true });
       }
       document.addEventListener('pointerout', event => {
         if (event.pointerType !== 'mouse' || event.relatedTarget || !this.current()) return;
+        clearTimeout(this.externalEntryTimer); this.externalEntryTimer = null;
         clearTimeout(this.timer); this.timer = null;
         this.explicit = false; this.syncPin(); this.setOpen(false);
       }, { signal });
@@ -137,7 +153,7 @@
       if (item.top < viewport.top || item.bottom > viewport.bottom) element.scrollIntoView({ block: 'nearest' });
     }
     dispose() {
-      if (this.disposed) return; this.disposed = true; clearTimeout(this.timer); clearTimeout(this.peekTimer); this.abort.abort();
+      if (this.disposed) return; this.disposed = true; clearTimeout(this.timer); clearTimeout(this.peekTimer); clearTimeout(this.externalEntryTimer); this.abort.abort();
       if (this.onPage) this.app.eventBus._off('pagechanging', this.onPage);
       this.root?.remove(); this.nodes = []; this.roots = []; this.active = null; this.document = null; this.app = null;
       this.expanded.clear(); this.searchCollapsed.clear();
