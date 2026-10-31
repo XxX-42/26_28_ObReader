@@ -34843,7 +34843,8 @@ ${xrefOffset}
         try {
           pdf = await PDFDocument.load(bytes, { updateMetadata: false });
         } catch (cause) {
-          throw Object.assign(fail("PDF_PAIR_ID_UNSUPPORTED", "Cannot safely parse this PDF."), { cause });
+          const encrypted = /(?:document|pdf).*encrypted/i.test(String(cause?.message || ""));
+          throw Object.assign(fail("PDF_PAIR_ID_UNSUPPORTED", encrypted ? "\u8BE5 PDF \u5DF2\u52A0\u5BC6\uFF1A\u53EF\u4EE5\u9605\u8BFB\uFF0C\u4F46\u76EE\u524D\u65E0\u6CD5\u5199\u5165\u6279\u6CE8\u914D\u5BF9\u6807\u8BC6\u3002" : "\u65E0\u6CD5\u5B89\u5168\u89E3\u6790\u6B64 PDF\uFF0C\u6682\u65F6\u4E0D\u80FD\u5199\u5165\u6279\u6CE8\u914D\u5BF9\u6807\u8BC6\u3002"), { cause });
         }
         if (pdf.isEncrypted) throw fail("PDF_PAIR_ID_UNSUPPORTED", "Encrypted PDFs cannot receive an identity.");
         return pdf;

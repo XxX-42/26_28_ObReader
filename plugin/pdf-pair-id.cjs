@@ -26,7 +26,12 @@ function infoPairId(pdf) {
 async function load(bytes) {
   let pdf;
   try { pdf = await PDFDocument.load(bytes, { updateMetadata: false }); }
-  catch (cause) { throw Object.assign(fail('PDF_PAIR_ID_UNSUPPORTED', 'Cannot safely parse this PDF.'), { cause }); }
+  catch (cause) {
+    const encrypted = /(?:document|pdf).*encrypted/i.test(String(cause?.message || ''));
+    throw Object.assign(fail('PDF_PAIR_ID_UNSUPPORTED', encrypted
+      ? '该 PDF 已加密：可以阅读，但目前无法写入批注配对标识。'
+      : '无法安全解析此 PDF，暂时不能写入批注配对标识。'), { cause });
+  }
   if (pdf.isEncrypted) throw fail('PDF_PAIR_ID_UNSUPPORTED', 'Encrypted PDFs cannot receive an identity.');
   return pdf;
 }
