@@ -4370,6 +4370,18 @@ test(
       const radius=Math.hypot(rect.left+rect.width/2-w.x,rect.top+rect.height/2-w.y);
       return Math.abs(angle-150)<2 && Math.abs(radius-(w.radius+rect.width/2+12.6))<2;
     }),true,'Rectangle colors must stay aligned with the rectangle sector');
+    const swatchPoint=await viewer.$eval('.pdfToolWheelColors span:nth-child(4)',el=>{const r=el.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}});
+    await page.mouse.move(pointerFrame.x+swatchPoint.x,pointerFrame.y+swatchPoint.y,{steps:12});
+    assert.equal(await viewer.evaluate(()=>!!document.querySelector('.pdfToolWheelColors span:nth-child(4)')),true,'Moving to the color must not activate the neighboring pointer shortcut');
+    await page.evaluate(()=>{window.__wheelColorRequest=null;window.addEventListener('message',e=>{if(e.data?.type==='annotation-tool-color-preference-request')window.__wheelColorRequest=e.data})});
+    await page.mouse.up({button:'middle'});
+    await viewer.waitForFunction(()=>PDFViewerApplication.pdfViewer.annotationEditorMode===5);
+    await page.waitForFunction(()=>window.__wheelColorRequest?.mode===5 && window.__wheelColorRequest?.color==='#2F9E44');
+    await page.mouse.move(pointerFrame.x+pointerWheelPoint.x,pointerFrame.y+pointerWheelPoint.y);
+    await page.mouse.down({button:'middle'});
+    await viewer.waitForSelector('.pdfToolWheelPointer');
+    await page.mouse.move(pointerFrame.x+squareSectorPoint.x,pointerFrame.y+squareSectorPoint.y);
+    await viewer.waitForSelector('.pdfToolWheelColors');
     const pointerPoint = await viewer.$eval(".pdfToolWheelPointer .pointerPad", el => {const r=el.getBoundingClientRect();return {x:r.left+r.width*.55,y:r.top+r.height*.75};});
     await page.mouse.move(pointerFrame.x+pointerPoint.x,pointerFrame.y+pointerPoint.y);
     assert.equal(await viewer.evaluate(() => document.querySelector(".pdfToolWheelPointer").classList.contains("isPointerHot")),true,"Pointer shortcut must visibly acknowledge the mouse before release");

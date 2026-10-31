@@ -254,22 +254,20 @@
       });
     }
 
-    snapshotHit(wheel,event) {
-      if (!this.activateSnapshot || wheel?.snapshotControl?.disabled || this.hit(event.clientX,event.clientY)) return false;
-      const r=wheel?.snapshotControl?.getBoundingClientRect();
-      return !!r && event.clientX>=r.left && event.clientX<=r.right && event.clientY>=r.top && event.clientY<=r.bottom;
+    shortcutHit(button, event) {
+      if (!button || button.disabled || this.hit(event.clientX, event.clientY)) return false;
+      const pad=button.querySelector('.pointerPad'), matrix=pad?.getScreenCTM?.();
+      if (!pad || !matrix || typeof pad.isPointInFill !== 'function') return false;
+      const point=pad.ownerSVGElement.createSVGPoint();point.x=event.clientX;point.y=event.clientY;
+      return pad.isPointInFill(point.matrixTransform(matrix.inverse()));
     }
 
-    pointerHit(wheel, event) {
-      if (this.hit(event.clientX, event.clientY)) return false;
-      const rect = wheel?.pointerControl?.getBoundingClientRect();
-      if (!rect || !this.activatePointer) return false;
-      // Pad the whole control rather than requiring the faint SVG stroke.
-      // Real color buttons still own their precise circular hit regions.
-      if (this.hit(event.clientX, event.clientY)) return false;
-      const outsideWheel = Math.hypot(event.clientX - wheel.x, event.clientY - wheel.y) > wheel.radius + 4;
-      return outsideWheel && event.clientX >= rect.left - 14 && event.clientX <= rect.right + 14 &&
-        event.clientY >= rect.top - 14 && event.clientY <= rect.bottom + 14;
+    snapshotHit(wheel,event) {
+      return !!this.activateSnapshot && this.shortcutHit(wheel?.snapshotControl,event);
+    }
+
+    pointerHit(wheel,event) {
+      return !!this.activatePointer && this.shortcutHit(wheel?.pointerControl,event);
     }
 
     down(event) {
