@@ -56,6 +56,18 @@ test('real PDF.js region images exclude native annotations, rotate correctly, re
       return colors;
     });
     for(const pixel of result) assert.deepEqual(pixel,[0,255,0,255],'unflattened PDF annotation must not enter cropped source image');
+    const cropBenchmark=await page.evaluate(async()=>{
+      const p=await fixtureDocument.getPage(1),runs=[];
+      for(const rect of [[100,100,200,200],[100,100,350,350],[30,40,570,780]]){
+        const samples=[];
+        for(let i=0;i<5;i++){const start=performance.now();const image=await RectangleModule.renderRegion(p,rect,{document,pixelRatio:1});
+          samples.push({ms:performance.now()-start,pngBytes:image.blob.size,rgbaBytes:image.width*image.height*4,width:image.width,height:image.height});}
+        runs.push({rect,samples});
+      }
+      return runs;
+    });
+    await mkdir(path.join(root,'tests/artifacts/rectangle-region'),{recursive:true});
+    await writeFile(path.join(root,'tests/artifacts/rectangle-region/crop-size-benchmark.json'),JSON.stringify({kind:'browser fixture; crop render only',cropBenchmark},null,2));
     await page.evaluate(() => {
       class Component {constructor(){this.children=[];} load(){this.loaded=true;this.onload?.();} addChild(c){this.children.push(c);if(this.loaded)c.load?.();return c;} unload(){for(const c of this.children)c.unload?.();this.onunload?.();}}
       let originalCalls=0;
