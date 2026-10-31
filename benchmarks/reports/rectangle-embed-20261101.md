@@ -38,3 +38,13 @@ This is a measured gate for these fixtures and environments, not a latency guara
 An uncached region in an unopened PDF still requires validation/parsing/rendering and is not proved to finish within 300 ms.
 Persisted cache eviction, external source modification or geometry changes can require that slower path.
 Production Vault deployment and physical iPad acceptance are not part of this receipt.
+
+## Copy-before-close acceptance
+
+The copied region is now prepared as a cropped PNG before the link is placed on the clipboard.
+Run rectangle-1793471386921 closed the Reader immediately after copying and before first opening Markdown:
+first image 150.2 ms; real plugin reload with no Reader 149.7 ms, PDF reads/acquisitions both zero.
+The source PDF was unchanged after initial pairing, including ordinary save, resize, reopen and navigation tests.
+This addresses normal newly created region links before the first Markdown embed is displayed.
+Preparation failure is logged and copying remains available, with the original validated rendering path as fallback.
+The 300 ms gate does not apply as a universal guarantee after cache eviction or failed preparation.

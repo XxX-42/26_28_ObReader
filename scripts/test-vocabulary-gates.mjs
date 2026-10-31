@@ -212,6 +212,7 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/plugin-host.test.mjs",
     "tests/reader-anchor-store.test.mjs",
     "tests/rectangle-region.test.mjs",
+    "tests/region-image-cache.test.mjs",
     "tests/auto-copy-selection-links.test.mjs",
     "tests/selection-copy-format.test.mjs",
     "tests/reader-backlink-presentation.test.mjs",

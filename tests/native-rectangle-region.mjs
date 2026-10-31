@@ -75,7 +75,7 @@ try {
   assert.equal(report.afterDraw.links.length,1);assert.match(report.afterDraw.links[0],/^!\[\[/);assert.equal(report.afterDraw.mode,0);
   report.saved=await evaluate(`const r=app.__regionNative,p=app.plugins.plugins['pdf-web-reader'];const state=await p.annotationHost.store.readDocument(r.view.annotationDocument,{readOnly:true});
     const bytes=new Uint8Array(await app.vault.readBinary(r.view.documentFile));r.pairedSha=require('crypto').createHash('sha256').update(bytes).digest('hex');r.pairedXxh=p.pdfHashRuntime.fingerprint(bytes);
-    r.sourceWrites=0;r.savedRows=state.annotations;r.link=r.links[0];r.notePath=r.directory+'/Notes/区域笔记.md';await app.vault.create(r.notePath,r.link);
+    r.sourceWrites=0;r.savedRows=state.annotations;r.savedPairId=r.view.annotationDocument.pairId;r.link=r.links[0];r.notePath=r.directory+'/Notes/区域笔记.md';await app.vault.create(r.notePath,r.link);
     r.firstProfile=[];r.restoreProfile=[];
     const wrap=(obj,key)=>{const original=obj[key];obj[key]=async function(...args){const start=performance.now();try{return await original.apply(this,args)}finally{r.firstProfile.push({stage:key,ms:performance.now()-start})}};r.restoreProfile.push(()=>obj[key]=original);};
     wrap(p,'resolveRectangleEmbedTarget');wrap(p.rectangleDocumentPool,'acquire');wrap(r.host.store,'readDocument');wrap(app.vault,'readBinary');
@@ -86,18 +86,25 @@ try {
     const canvasProto=r.view.iframe.contentWindow.HTMLCanvasElement.prototype,originalBlob=canvasProto.toBlob;
     canvasProto.toBlob=function(callback,...args){const start=performance.now();return originalBlob.call(this,blob=>{r.firstProfile.push({stage:'canvasToBlob',ms:performance.now()-start});callback(blob)},...args)};
     r.restoreProfile.push(()=>canvasProto.toBlob=originalBlob);
+    if(${process.env.OBREADER_REGION_CLOSE_BEFORE_FIRST==='1'}){await r.view.prepareControlledClose('native-region-before-first');r.view.leaf.detach();r.closedBeforeFirst=true;}
     r.firstEmbedStart=performance.now();r.firstEmbedTiming=new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>{observer.disconnect();reject(Error('first embed timing timeout'))},15000);
       const observer=new MutationObserver(()=>{const img=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(x=>x.getBoundingClientRect().width>0);if(!img)return;
         observer.disconnect();img.decode().then(()=>{clearTimeout(timer);resolve(performance.now()-r.firstEmbedStart)},reject)});
       observer.observe(document.body,{childList:true,subtree:true});});
     const leaf=app.workspace.getLeaf(true),mountStart=performance.now();await leaf.openFile(app.vault.getAbstractFileByPath(r.notePath));r.firstProfile.push({stage:'openMarkdown',ms:performance.now()-mountStart});r.mdLeaf=leaf;
-    return {annotations:state.annotations,pairId:r.view.annotationDocument.pairId,sha:r.pairedSha,xxh:r.pairedXxh,saveCalls:r.saveCalls};`);
+    return {annotations:state.annotations,pairId:r.savedPairId,sha:r.pairedSha,xxh:r.pairedXxh,saveCalls:r.saveCalls};`);
   assert.equal(report.saved.annotations.length,1);assert.equal(report.saved.annotations[0].kind,'Square');assert.equal(report.saved.saveCalls,0);
   await wait(`return !!document.querySelector('.pdfReaderRectangleEmbed img');`,'real Markdown embed');
   report.firstEmbedMs=await evaluate(`return await app.__regionNative.firstEmbedTiming;`);
   assert.ok(report.firstEmbedMs<=300,`first region image exceeded 300ms: ${report.firstEmbedMs}`);
   report.firstEmbedProfile=await evaluate(`const r=app.__regionNative;r.restoreProfile.splice(0).reverse().forEach(f=>f());return r.firstProfile;`);
+  report.closedBeforeFirst=await evaluate(`return app.__regionNative.closedBeforeFirst===true;`);
+  if(report.closedBeforeFirst){
+    await evaluate(`const r=app.__regionNative,p=app.plugins.plugins['pdf-web-reader'];await p.openPdf(app.vault.getAbstractFileByPath(r.pdfPath));return true;`);
+    await wait(`const r=app.__regionNative,p=app.plugins.plugins['pdf-web-reader'];r.view=[...p.views].find(v=>v.documentFile?.path===r.pdfPath);return r.view?.annotationHydrationAllowed===true;`,'reopen Reader after first closed-PDF embed');
+    await evaluate(`const r=app.__regionNative;await app.workspace.revealLeaf(r.mdLeaf);return true;`);
+  }
   report.sourceProof=await evaluate(`const r=app.__regionNative,v=r.view,stat=await app.vault.adapter.stat(v.documentFile.path),s=v.annotationDocument.source;return {proof:r.host.isVerifiedReaderSource?.(v,stat),stat,hash:v.annotationSourceHash,source:{hash:s?.sourceHash,mtime:s?.mtime,size:s?.size}};`);
   report.embed=await evaluate(`const img=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(img=>img.getBoundingClientRect().width>0);await img.decode();const blob=await (await fetch(img.src)).blob();return {width:img.naturalWidth,height:img.naturalHeight,alt:img.alt,encodedBytes:blob.size,rawRgbaBytes:img.naturalWidth*img.naturalHeight*4};`);
   assert.ok(report.embed.width>0&&report.embed.height>0);
