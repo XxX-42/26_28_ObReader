@@ -118,7 +118,7 @@
         const button = wheel.element.ownerDocument.createElement('button');
         button.className = 'pdfToolWheelSnapshot'; button.type = 'button';
         button.setAttribute('aria-label', '矩形快照'); button.title = '矩形快照';
-        button.innerHTML = '<svg viewBox="0 0 70 65" aria-hidden="true"><path class="pointerPad" d="M4 4 H22 A44 44 0 0 0 66 48 V61 H4 Z"/><rect x="13" y="36" width="24" height="17" fill="none" stroke="white" stroke-width="2" stroke-dasharray="4 3"/></svg>';
+        button.innerHTML = '<svg viewBox="0 0 70 65" aria-hidden="true"><path class="pointerPad" d="M66 4 H48 A44 44 0 0 1 4 48 V61 H66 Z"/><rect x="33" y="36" width="24" height="17" fill="none" stroke="white" stroke-width="2" stroke-dasharray="4 3"/></svg>';
         button.addEventListener('click', event=>{event.preventDefault();event.stopImmediatePropagation();this.activateSnapshot(wheel)});
         wheel.element.append(button);wheel.snapshotControl=button;
       }
