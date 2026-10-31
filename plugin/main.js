@@ -4243,7 +4243,8 @@ class PdfReaderView extends EditableFileView {
         origin,
       };
       await this.plugin.annotationHost.handleMessage(this, message);
-      this.plugin.rectangleEmbeds?.invalidate(request.file.path);
+      const changedIds = Array.isArray(message.operations) && message.operations.every(operation => typeof operation?.uuid === "string" && operation.uuid) ? message.operations.map(operation => operation.uuid) : null;
+      this.plugin.rectangleEmbeds?.invalidate(request.file.path, changedIds);
     } catch (error) {
       this.recordSaveTiming({ requestId, documentId, status: "error", elapsedMs: performance.now() - saveStartedAt });
       this.postToViewer({

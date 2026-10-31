@@ -170,17 +170,20 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
       const text = this.containerEl.ownerDocument.createElement('span');
       text.className = 'pdfReaderRectangleEmbedStatus'; text.textContent = message; this.containerEl.append(text);
     }
-    async refresh() {
+    async refresh({ checkUnchanged = false } = {}) {
       if (disposed || this.disposed || this.fallback || !this.visible) return;
       const generation = ++this.generation;
       this.abort?.abort(); this.abort = new AbortController();
       const signal = this.abort.signal;
       const current = () => !disposed && !this.disposed && generation === this.generation && !signal.aborted;
-      this.showMessage('正在加载矩形区域…');
+      if (!checkUnchanged || !this.target) this.showMessage('正在加载矩形区域…');
       try {
         const target = await resolveShared(this.parsed, this.file, this.context.sourcePath || '');
         if (!current()) return;
         const region = squareRegion(target.row);
+        if (checkUnchanged && this.target && region && this.containerEl.querySelector('img')) {
+          if (this.renderedImageKey === imageKey(target, region, this.containerEl.ownerDocument)) { this.target = target; return; }
+        }
         if (!region) {
           this.containerEl.replaceChildren(); this.containerEl.classList.remove('pdfReaderRectangleEmbed');
           this.fallback = this.addChild(original(this.context, target.file, this.subpath));
@@ -202,22 +205,23 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
           // Re-resolve at activation: rename/delete/source changes must not use
           // a stale file object or resurrect a removed UUID.
           void resolveTarget(this.parsed, this.file, this.context.sourcePath || '')
-            .then(value => current() && plugin.openPdf(value.file, value.readerTarget))
-            .catch(error => current() && this.showMessage(error.message));
+            .then(value => !disposed && !this.disposed && plugin.openPdf(value.file, value.readerTarget))
+            .catch(error => !disposed && !this.disposed && this.showMessage(error.message));
         };
         image.addEventListener('click', open); image.addEventListener('keydown', open);
+        this.renderedImageKey = imageKey(target, region, this.containerEl.ownerDocument);
         this.containerEl.replaceChildren(image);
       } catch (error) {
         if (current()) this.showMessage(`区域不可用：${error.message || error}`);
       }
     }
-    invalidate(path) {
-      if (this.disposed) return;
+    invalidate(path, ids = null) {
+      if (this.disposed || (ids && !ids.has(this.parsed.target?.id))) return;
       const target = this.target;
       if (!path || path === this.file.path || path === target?.file.path || path === target?.annotationPath) {
         if (this.refreshQueued) return;
         this.refreshQueued = true;
-        queueMicrotask(() => { this.refreshQueued = false; if (!this.disposed) void this.refresh(); });
+        queueMicrotask(() => { this.refreshQueued = false; if (!this.disposed) void this.refresh({ checkUnchanged: true }); });
       }
     }
     onunload() {
@@ -241,7 +245,7 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
       const image=await regionImage(target,region,ownerDocument,undefined,current,false);
       if(current())await diskCache.put(imageKey(target,region,ownerDocument),image);
     },
-    invalidate(path) { ++resolutionGeneration; resolvedTargets.clear(); for (const component of components) component.invalidate(path); },
+    invalidate(path, uuids = null) { ++resolutionGeneration; resolvedTargets.clear(); const ids = Array.isArray(uuids) ? new Set(uuids) : null; for (const component of components) component.invalidate(path, ids); },
     dispose() {
       disposed = true;
       diskCache.dispose();

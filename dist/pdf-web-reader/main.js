@@ -728,18 +728,24 @@ var __PDFReaderRectangleEmbed = (() => {
             text.textContent = message;
             this.containerEl.append(text);
           }
-          async refresh() {
+          async refresh({ checkUnchanged = false } = {}) {
             if (disposed || this.disposed || this.fallback || !this.visible) return;
             const generation = ++this.generation;
             this.abort?.abort();
             this.abort = new AbortController();
             const signal = this.abort.signal;
             const current = () => !disposed && !this.disposed && generation === this.generation && !signal.aborted;
-            this.showMessage("\u6B63\u5728\u52A0\u8F7D\u77E9\u5F62\u533A\u57DF\u2026");
+            if (!checkUnchanged || !this.target) this.showMessage("\u6B63\u5728\u52A0\u8F7D\u77E9\u5F62\u533A\u57DF\u2026");
             try {
               const target = await resolveShared(this.parsed, this.file, this.context.sourcePath || "");
               if (!current()) return;
               const region = squareRegion(target.row);
+              if (checkUnchanged && this.target && region && this.containerEl.querySelector("img")) {
+                if (this.renderedImageKey === imageKey(target, region, this.containerEl.ownerDocument)) {
+                  this.target = target;
+                  return;
+                }
+              }
               if (!region) {
                 this.containerEl.replaceChildren();
                 this.containerEl.classList.remove("pdfReaderRectangleEmbed");
@@ -763,24 +769,25 @@ var __PDFReaderRectangleEmbed = (() => {
                 if (event.type === "keydown" && event.key !== "Enter" && event.key !== " ") return;
                 event.preventDefault();
                 event.stopPropagation();
-                void resolveTarget(this.parsed, this.file, this.context.sourcePath || "").then((value) => current() && plugin.openPdf(value.file, value.readerTarget)).catch((error) => current() && this.showMessage(error.message));
+                void resolveTarget(this.parsed, this.file, this.context.sourcePath || "").then((value) => !disposed && !this.disposed && plugin.openPdf(value.file, value.readerTarget)).catch((error) => !disposed && !this.disposed && this.showMessage(error.message));
               };
               image.addEventListener("click", open);
               image.addEventListener("keydown", open);
+              this.renderedImageKey = imageKey(target, region, this.containerEl.ownerDocument);
               this.containerEl.replaceChildren(image);
             } catch (error) {
               if (current()) this.showMessage(`\u533A\u57DF\u4E0D\u53EF\u7528\uFF1A${error.message || error}`);
             }
           }
-          invalidate(path) {
-            if (this.disposed) return;
+          invalidate(path, ids = null) {
+            if (this.disposed || ids && !ids.has(this.parsed.target?.id)) return;
             const target = this.target;
             if (!path || path === this.file.path || path === target?.file.path || path === target?.annotationPath) {
               if (this.refreshQueued) return;
               this.refreshQueued = true;
               queueMicrotask(() => {
                 this.refreshQueued = false;
-                if (!this.disposed) void this.refresh();
+                if (!this.disposed) void this.refresh({ checkUnchanged: true });
               });
             }
           }
@@ -811,10 +818,11 @@ var __PDFReaderRectangleEmbed = (() => {
             const image = await regionImage(target, region, ownerDocument, void 0, current, false);
             if (current()) await diskCache.put(imageKey(target, region, ownerDocument), image);
           },
-          invalidate(path) {
+          invalidate(path, uuids = null) {
             ++resolutionGeneration;
             resolvedTargets.clear();
-            for (const component of components) component.invalidate(path);
+            const ids = Array.isArray(uuids) ? new Set(uuids) : null;
+            for (const component of components) component.invalidate(path, ids);
           },
           dispose() {
             disposed = true;
@@ -68465,7 +68473,8 @@ class PdfReaderView extends EditableFileView {
         origin,
       };
       await this.plugin.annotationHost.handleMessage(this, message);
-      this.plugin.rectangleEmbeds?.invalidate(request.file.path);
+      const changedIds = Array.isArray(message.operations) && message.operations.every(operation => typeof operation?.uuid === "string" && operation.uuid) ? message.operations.map(operation => operation.uuid) : null;
+      this.plugin.rectangleEmbeds?.invalidate(request.file.path, changedIds);
     } catch (error) {
       this.recordSaveTiming({ requestId, documentId, status: "error", elapsedMs: performance.now() - saveStartedAt });
       this.postToViewer({
