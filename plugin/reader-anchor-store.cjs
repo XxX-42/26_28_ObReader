@@ -108,7 +108,7 @@ function validateSelectionAnchor(value) {
   return value;
 }
 
-function createReaderAnchorStore({ adapter, hash, makeId, root = ROOT } = {}) {
+function createReaderAnchorStore({ adapter, hash, makeId, currentStore = null, root = ROOT } = {}) {
   if (!adapter || !["exists", "read", "write", "rename", "mkdir", "list"].every((method) => typeof adapter[method] === "function")) {
     throw new TypeError("Reader Anchor Store requires the cross-platform Obsidian DataAdapter API.");
   }
@@ -139,10 +139,62 @@ function createReaderAnchorStore({ adapter, hash, makeId, root = ROOT } = {}) {
     return `${directoryFor(docKey)}/${anchorId}.json`;
   }
 
+  async function inlineDocuments(docKey=null){
+    if(!currentStore)return [];
+    const registryPath=`${root.slice(0,root.lastIndexOf('/'))}/_registry.json`;
+    if(!await adapter.exists(registryPath))return [];
+    const registry=JSON.parse(await adapter.read(registryPath));
+    if(registry.schemaVersion!==15||!registry.entries)throw codedError('READER_ANCHOR_REGISTRY_INVALID','Cannot verify annotation routes.');
+    const documents=[];
+    for(const row of Object.values(registry.entries)){
+      if(docKey&&row.docKey!==docKey)continue;
+      currentStore.bindPath(row.sourcePath,row.jsonlPath);
+      const current=await currentStore.readCurrent(row.sourcePath);
+      if(!current||current.document.docKey!==row.docKey||current.document.documentId!==row.documentId)throw codedError('READER_ANCHOR_IDENTITY_MISMATCH','Annotation route cannot be verified.');
+      documents.push(current);
+    }
+    return documents;
+  }
+  async function inlineGet(docKey,anchorId){
+    const docs=await inlineDocuments(docKey);
+    const matches=docs.flatMap(d=>(d.selectionAnchors||[]).filter(a=>a.anchorId===anchorId));
+    if(matches.length>1)throw codedError('READER_ANCHOR_ID_AMBIGUOUS','Multiple documents contain this selection anchor.');
+    return matches[0]||null;
+  }
+  async function migrateDocument(docKey){
+    if(!currentStore)throw codedError('READER_ANCHOR_BACKEND_REQUIRED','Inline anchor storage is not configured.');
+    const docs=await inlineDocuments(docKey);
+    if(docs.length!==1)throw codedError('READER_ANCHOR_DOCUMENT_MISSING','Exactly one verified annotation JSONL is required.');
+    const directory=directoryFor(docKey),files=await adapter.exists(directory)?(await adapter.list(directory)).files:[];
+    const anchors=[],originals=[];
+    for(const path of files){
+      const name=path.slice(path.lastIndexOf('/')+1);if(!name.endsWith('.json'))continue;
+      const id=name.slice(0,-5);if(!ANCHOR_ID.test(id))throw codedError('READER_ANCHOR_ID_INVALID','Invalid legacy anchor filename.');
+      const text=await adapter.read(path),sealed=JSON.parse(text),unsigned=await verify(sealed,hash);validateSelectionAnchor(unsigned);
+      if(unsigned.docKey!==docKey||unsigned.anchorId!==id||unsigned.documentId!==docs[0].document.documentId)throw codedError('READER_ANCHOR_IDENTITY_MISMATCH','Legacy anchor identity differs.');
+      anchors.push(sealed);originals.push({path,text});
+    }
+    const doc=docs[0];
+    await currentStore.saveSelectionAnchors({sourcePath:doc.document.sourcePath,pairId:doc.pairId,anchors});
+    for(const a of anchors){const saved=await inlineGet(docKey,a.anchorId);if(canonicalJson(saved)!==canonicalJson(a))throw codedError('READER_ANCHOR_WRITE_MISMATCH','Migrated anchor did not verify.');}
+    for(const {path,text} of originals){if(await adapter.read(path)!==text)throw codedError('READER_ANCHOR_STALE_MIGRATION','Legacy anchor changed; retained.');await adapter.remove(path);}
+    return {docKey,migrated:anchors.length};
+  }
+
   async function create(input) {
     const anchorId = input?.anchorId || makeId();
     const unsigned = validateSelectionAnchor({ ...input, anchorId, schemaVersion: 1, kind: "obreader-selection-anchor" });
     const target = pathFor(unsigned.docKey, anchorId);
+    if(currentStore){
+      const docs=await inlineDocuments(unsigned.docKey);
+      if(docs.length>1)throw codedError('READER_ANCHOR_DOCUMENT_MISSING','Multiple annotation routes.');
+      if(docs.length===1){
+      if(await inlineGet(unsigned.docKey,anchorId)||await adapter.exists(target))throw codedError('READER_ANCHOR_ID_COLLISION','Anchor ID already exists.');
+      const sealed=await seal(unsigned,hash),doc=docs[0];
+      await currentStore.saveSelectionAnchors({sourcePath:doc.document.sourcePath,pairId:doc.pairId,anchors:[sealed]});
+      return sealed;
+      }
+    }
     if (await adapter.exists(target)) throw codedError("READER_ANCHOR_ID_COLLISION", "The immutable Anchor ID is already in use.");
     await ensureDirectory(directoryFor(unsigned.docKey));
     const sealed = await seal(unsigned, hash);
@@ -158,9 +210,10 @@ function createReaderAnchorStore({ adapter, hash, makeId, root = ROOT } = {}) {
 
   async function get(docKey, anchorId, expectedDocumentId = null) {
     const target = pathFor(docKey, anchorId);
-    if (!(await adapter.exists(target))) return null;
+    const inline=await inlineGet(docKey,anchorId);
+    if(!inline&&!(await adapter.exists(target)))return null;
     let parsed;
-    try { parsed = JSON.parse(await adapter.read(target)); }
+    try { parsed = inline || JSON.parse(await adapter.read(target)); }
     catch { throw codedError("READER_ANCHOR_JSON_INVALID", "The Anchor record is incomplete or malformed."); }
     let unsigned;
     try { unsigned = await verify(parsed, hash); }
@@ -175,7 +228,8 @@ function createReaderAnchorStore({ adapter, hash, makeId, root = ROOT } = {}) {
 
   async function list(docKey) {
     const directory = directoryFor(docKey);
-    if (!(await adapter.exists(directory))) return { anchors: [], errors: [] };
+    const inline=(await inlineDocuments(docKey)).flatMap(d=>d.selectionAnchors||[]);
+    if (!(await adapter.exists(directory))) { const anchors=[];for(const a of inline)anchors.push(await get(docKey,a.anchorId));return {anchors,errors:[]}; }
     const listing = await adapter.list(directory);
     const anchors = [];
     const errors = [];
@@ -189,6 +243,7 @@ function createReaderAnchorStore({ adapter, hash, makeId, root = ROOT } = {}) {
         if (anchor) anchors.push(anchor);
       } catch (error) { errors.push({ path, code: error.code || "READER_ANCHOR_INVALID" }); }
     }
+    for(const a of inline)if(!anchors.some(x=>x.anchorId===a.anchorId))anchors.push(await get(docKey,a.anchorId));
     anchors.sort((left, right) => left.anchorId.localeCompare(right.anchorId));
     return { anchors, errors };
   }
@@ -197,6 +252,9 @@ function createReaderAnchorStore({ adapter, hash, makeId, root = ROOT } = {}) {
     if (!ANCHOR_ID.test(anchorId || "")) {
       throw codedError("READER_ANCHOR_ID_INVALID", "A valid Anchor ID is required.");
     }
+    const inlineMatches=[];for(const d of await inlineDocuments())for(const a of d.selectionAnchors||[])if(a.anchorId===anchorId)inlineMatches.push(await get(d.document.docKey,anchorId));
+    if(inlineMatches.length>1)throw codedError('READER_ANCHOR_ID_AMBIGUOUS','Multiple documents contain this ID.');
+    if(inlineMatches.length)return inlineMatches[0];
     if (!(await adapter.exists(root))) return null;
     const listing = await adapter.list(root);
     const matches = [];
@@ -225,6 +283,15 @@ function createReaderAnchorStore({ adapter, hash, makeId, root = ROOT } = {}) {
         continue;
       }
       requested.add(anchorId);
+    }
+    if(currentStore){
+      for(const doc of await inlineDocuments())for(const value of doc.selectionAnchors||[]){
+        const id=value.anchorId;if(!requested.has(id))continue;
+        if(anchors.has(id)||errors.has(id)){anchors.delete(id);errors.set(id,codedError('READER_ANCHOR_ID_AMBIGUOUS','Multiple documents contain this ID.'));continue;}
+        try{const a=validateSelectionAnchor(await verify(value,hash));anchors.set(id,a);}catch(e){errors.set(id,e);}
+      }
+      if(await adapter.exists(root))for(const id of requested)if(!anchors.has(id)&&!errors.has(id)){try{const a=await findById(id);if(a)anchors.set(id,a);}catch(e){errors.set(id,e)}}
+      return {anchors,errors};
     }
     if (!requested.size || !(await adapter.exists(root))) return { anchors, errors };
 
@@ -263,7 +330,7 @@ function createReaderAnchorStore({ adapter, hash, makeId, root = ROOT } = {}) {
     return { anchors, errors };
   }
 
-  return Object.freeze({ root, directoryFor, pathFor, create, get, list, findById, findManyById });
+  return Object.freeze({ root, directoryFor, pathFor, create, get, list, findById, findManyById, migrateDocument });
 }
 
 module.exports = {

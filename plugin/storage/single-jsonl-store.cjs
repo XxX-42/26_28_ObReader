@@ -96,17 +96,37 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
       !/^[a-f0-9]{12}$/.test(document.docKey||'')||typeof document.documentId!=='string'||!document.documentId||
       !Number.isSafeInteger(header.revision)||header.revision<0||typeof header.commitId!=='string'||!header.commitId||
       !/^sha256-v1:[a-f0-9]{64}$/.test(header.historyDigest||''))throw error('V15_FILE_INVALID','Invalid current-state header.');
-    const annotations=[],tombstones=[],deletionGuards=[],seen=new Set();
+    const annotations=[],tombstones=[],deletionGuards=[],selectionAnchors=[],anchorIds=new Set(),seen=new Set();
     for(const row of rows){
+      if(row?.type==='selection-anchor'){const a=row.value;if(!a||typeof a.anchorId!=='string'||anchorIds.has(a.anchorId)||a.docKey!==document.docKey||a.documentId!==document.documentId)throw error('V15_FILE_INVALID','Invalid selection anchor identity.');anchorIds.add(a.anchorId);selectionAnchors.push(clone(a));continue;}
       if(!row||!['annotation','deletion','deletionGuard'].includes(row.type))throw error('V15_FILE_INVALID','History or unknown record in current-state file.');
       const value=row.type==='deletionGuard'?clone(row.value):validateRow(row.value,row.type==='deletion');
       if(typeof value.uuid!=='string'||!value.uuid||seen.has(value.uuid))throw error('V15_FILE_INVALID','Duplicate or invalid annotation UUID.');
       seen.add(value.uuid);(row.type==='annotation'?annotations:row.type==='deletion'?tombstones:deletionGuards).push(value);
     }
-    return {header,document,pairId:header.pairId,revision:header.revision,commitId:header.commitId,annotations,tombstones,deletionGuards};
+    return {header,document,pairId:header.pairId,revision:header.revision,commitId:header.commitId,annotations,tombstones,deletionGuards,selectionAnchors};
   }
-  function stateRows(value){return [...value.annotations.map(value=>({type:'annotation',value})),...value.tombstones.map(value=>({type:'deletion',value})),...value.deletionGuards.map(value=>({type:'deletionGuard',value}))].sort((a,b)=>a.value.uuid<b.value.uuid?-1:a.value.uuid>b.value.uuid?1:0);}
+  function stateRows(value){return [...(value.selectionAnchors||[]).map(value=>({type:'selection-anchor',value})),...value.annotations.map(value=>({type:'annotation',value})),...value.tombstones.map(value=>({type:'deletion',value})),...value.deletionGuards.map(value=>({type:'deletionGuard',value}))].sort((a,b)=>(a.value.uuid||a.value.anchorId)<(b.value.uuid||b.value.anchorId)?-1:(a.value.uuid||a.value.anchorId)>(b.value.uuid||b.value.anchorId)?1:0);}
   async function readCurrent(sourcePath,pairId){const path=(await resolvePaths(sourcePath)).current,text=await raw(path);return text===null?null:currentFrom(text,sourcePath,pairId);}
+  async function saveSelectionAnchors({sourcePath,pairId,anchors}){
+    const paths=await resolvePaths(sourcePath);
+    return queued(paths.current,async()=>{
+      const beforeText=await raw(paths.current);
+      if(beforeText===null)throw error('V15_DOCUMENT_MISSING','The PDF needs a verified annotation JSONL before storing selection anchors.');
+      const before=currentFrom(beforeText,sourcePath,pairId),map=new Map(before.selectionAnchors.map(a=>[a.anchorId,a]));
+      for(const anchor of anchors){
+        if(anchor.docKey!==before.document.docKey||anchor.documentId!==before.document.documentId)throw error('V15_IDENTITY_CONFLICT','Selection anchor belongs to another document.');
+        const prior=map.get(anchor.anchorId);
+        if(prior&&canonicalJson(prior)!==canonicalJson(anchor))throw error('READER_ANCHOR_ID_COLLISION','Different selection anchor already uses this ID.');
+        map.set(anchor.anchorId,clone(anchor));
+      }
+      const {integrity,...header}=before.header;
+      const next=encode(header,stateRows({...before,selectionAnchors:[...map.values()]}));
+      currentFrom(next,sourcePath,pairId);
+      if(next!==beforeText)await publish(paths.current,next,beforeText);
+      return readCurrent(sourcePath,pairId);
+    });
+  }
   async function saveReaderState({sourcePath,pairId,deviceId:readerDeviceId,state}){
     validatePairId(pairId);
     if(typeof readerDeviceId!=='string'||!readerDeviceId||readerDeviceId.length>128||['__proto__','prototype','constructor'].includes(readerDeviceId))throw error('V15_READER_STATE_INVALID','Invalid reader device identity.');
@@ -169,7 +189,7 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
       if(expectedRevision!==undefined&&expectedRevision!==before.revision)throw error('V15_STALE_WRITE','The supplied revision is stale.');
       const previousHistory=await historyTextFor(before,paths.history),history=parseHistory(previousHistory.text,before);
       if(previousHistory.pending)await publishPrepared(paths.history,previousHistory.text,previousHistory.final,previousHistory.pending);
-      const map=new Map(stateRows(before).map(row=>[row.value.uuid,row]));
+      const map=new Map(stateRows({...before,selectionAnchors:[]}).map(row=>[row.value.uuid,row]));
       const entries=[],revision=before.revision+1,commitId=String(token());
       let versionFloor=[...map.values()].reduce((maximum,row)=>Math.max(maximum,row.value.version?.rev||0,row.value.clock?.timestamp||0),0);
       let index=0;
@@ -190,7 +210,7 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
       const historyText=encode(historyHeader,[...history,...entries].slice(-100));
       const historyPending=await prepare(paths.history,historyText,commitId);
       const header={...before.header,revision,commitId,historyDigest:digest(historyText)};
-      const rows=[...map.values()].sort((a,b)=>a.value.uuid<b.value.uuid?-1:a.value.uuid>b.value.uuid?1:0);
+      const rows=[...(before.selectionAnchors||[]).map(value=>({type:'selection-anchor',value})),...map.values()].sort((a,b)=>(a.value.uuid||a.value.anchorId)<(b.value.uuid||b.value.anchorId)?-1:(a.value.uuid||a.value.anchorId)>(b.value.uuid||b.value.anchorId)?1:0);
       const nextText=encode(header,rows);currentFrom(nextText,sourcePath,pairId);
       await publish(paths.current,nextText,beforeText);
       await publishPrepared(paths.history,historyText,oldHistory,historyPending);
@@ -271,6 +291,6 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
       return currentFrom(next,toPath,pairId);
     }));
   }
-  return Object.freeze({pathsFor,bindPath,initialize,readCurrent,readHistory,save,saveReaderState,updateSourceIdentity,renameDocument,sourceProtocol:FORMAT});
+  return Object.freeze({pathsFor,bindPath,initialize,readCurrent,readHistory,save,saveSelectionAnchors,saveReaderState,updateSourceIdentity,renameDocument,sourceProtocol:FORMAT});
 }
 module.exports={createSingleJsonlStore,FORMAT};

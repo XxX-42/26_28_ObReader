@@ -442,3 +442,46 @@ test("backlink page index fails closed on invalid linked anchors without enumera
   assert.deepEqual(errors, [["WAL_INTEGRITY_MISMATCH", "anchor-broken"]]);
   assert.equal(pageIndex.forPage("page-one").rows.length, 0);
 });
+
+test('inline selection anchors migrate without changing UUIDs, annotations, history or old link targets', async()=>{
+ const {createSingleJsonlStore}=require('../plugin/storage/single-jsonl-store.cjs');
+ const {createSingleJsonlRegistry}=require('../plugin/storage/single-jsonl-registry.cjs');
+ const adapter=new MemoryAdapter();adapter.remove=async p=>adapter.files.delete(p);adapter.process=async(p,fn)=>adapter.files.set(p,fn(await adapter.read(p)));
+ let seq=0;const makeId=()=>`test-id-${++seq}`;
+ const core=createSingleJsonlStore({adapter,token:makeId});
+ const document={docKey:anchorFixture.docKey,documentId:anchorFixture.documentId,sourcePath:'books/书.pdf'};
+ const pairId='12'.repeat(16),annotation={uuid:'keep-annotation',kind:'Square',pageIndex:36,payload:{editor:{rect:[1,2,3,4]}}};
+ await core.initialize({document,pairId,annotations:[annotation]});
+ await createSingleJsonlRegistry({adapter,store:core}).remember(await core.readCurrent(document.sourcePath));
+ const legacy=createReaderAnchorStore({adapter,hash,makeId});const first=await legacy.create({...anchorFixture,anchorId:'existing-anchor'});
+ const store=createReaderAnchorStore({adapter,hash,makeId,currentStore:core});const historyBefore=await adapter.read(core.pathsFor(document.sourcePath).history);
+ assert.deepEqual(await store.migrateDocument(document.docKey),{docKey:document.docKey,migrated:1});
+ assert.equal(await adapter.exists(legacy.pathFor(document.docKey,first.anchorId)),false);
+ assert.equal((await store.get(document.docKey,first.anchorId)).exactQuote,anchorFixture.exactQuote);
+ assert.equal((await store.findById(first.anchorId)).anchorId,first.anchorId);
+ const second=await store.create({...anchorFixture,anchorId:'new-inline-anchor'});
+ assert.equal(await adapter.exists(legacy.pathFor(document.docKey,second.anchorId)),false);
+ assert.equal((await store.list(document.docKey)).anchors.length,2);
+ assert.deepEqual((await core.readCurrent(document.sourcePath)).annotations,[annotation]);
+ assert.equal(await adapter.read(core.pathsFor(document.sourcePath).history),historyBefore);
+ await core.save({sourcePath:document.sourcePath,pairId,changes:[{...annotation,payload:{editor:{rect:[2,3,4,5]}}}]});
+ await core.saveReaderState({sourcePath:document.sourcePath,pairId,deviceId:'windows',state:{pageNumber:37}});
+ assert.equal((await core.readCurrent(document.sourcePath)).selectionAnchors.length,2);
+ const registry=createSingleJsonlRegistry({adapter,store:core});await registry.renameDocument({fromPath:document.sourcePath,toPath:'books/改名.pdf',pairId});
+ const reopened=createReaderAnchorStore({adapter,hash,makeId,currentStore:createSingleJsonlStore({adapter,token:makeId})});
+ assert.equal((await reopened.findManyById([first.anchorId,second.anchorId])).anchors.size,2);
+ assert.equal((await reopened.get(document.docKey,first.anchorId)).exactQuote,anchorFixture.exactQuote);
+ const index=createReaderBacklinkIndex();
+ assert.equal(parseReaderLinkFragment(encodeReaderLinkFragment({pageNumber:37,target:{kind:'selection',id:first.anchorId}})).target.id,first.anchorId);
+});
+
+test('migration retains old anchors and all annotation bytes when publication fails',async()=>{
+ const {createSingleJsonlStore}=require('../plugin/storage/single-jsonl-store.cjs');const {createSingleJsonlRegistry}=require('../plugin/storage/single-jsonl-registry.cjs');
+ const adapter=new MemoryAdapter();adapter.remove=async p=>adapter.files.delete(p);adapter.process=async(p,fn)=>adapter.files.set(p,fn(await adapter.read(p)));
+ const core=createSingleJsonlStore({adapter,token:()=> 'publication-id'}),pairId='34'.repeat(16),document={docKey:anchorFixture.docKey,documentId:anchorFixture.documentId,sourcePath:'book.pdf'};
+ await core.initialize({document,pairId});await createSingleJsonlRegistry({adapter,store:core}).remember(await core.readCurrent(document.sourcePath));
+ const legacy=createReaderAnchorStore({adapter,hash,makeId:()=> 'legacy-id'});await legacy.create({...anchorFixture,anchorId:'retained-anchor'});
+ const path=core.pathsFor(document.sourcePath).current,before=await adapter.read(path);adapter.process=async()=>{throw Error('disk failure')};
+ const store=createReaderAnchorStore({adapter,hash,makeId:()=> 'other-id',currentStore:core});await assert.rejects(store.migrateDocument(document.docKey),/disk failure/);
+ assert.equal(await adapter.read(path),before);assert.equal(await adapter.exists(legacy.pathFor(document.docKey,'retained-anchor')),true);
+});

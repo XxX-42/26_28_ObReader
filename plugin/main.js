@@ -4626,6 +4626,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       acquireDocument: (target, signal) => this.rectangleDocumentPool.acquire(target, signal),
     });
     this.readerAnchorStore = createReaderAnchorStore({
+      currentStore: this.annotationHost.store.core,
       adapter: this.app.vault.adapter,
       hash: (bytes) => this.pdfHashRuntime.fingerprint(bytes),
       makeId: makeToken,
