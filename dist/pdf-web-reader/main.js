@@ -60571,7 +60571,7 @@ ${entry.actorId || "legacy"}`
         }
         async function confirmPageIdentity(view, message) {
           const doc = view.annotationDocument;
-          if (!doc || message.documentId !== view.documentId || message.openRequest !== view.openRequest) return;
+          if (!doc || view.annotationSourceReplacing || message.documentId !== view.documentId || message.openRequest !== view.openRequest) return;
           const pageCount = Number.isSafeInteger(message.pageCount) && message.pageCount >= 0 ? message.pageCount : null;
           const identities = Array.isArray(message.orderedPageIdentities) && message.orderedPageIdentities.length === pageCount && message.orderedPageIdentities.every((item) => typeof item === "string" && item.length <= 512) ? message.orderedPageIdentities : null;
           if (!identities || message.identityStatus === "UNKNOWN") {
@@ -60604,7 +60604,9 @@ ${entry.actorId || "legacy"}`
           let result;
           try {
             result = await store.updateSourceIdentity(identityInput);
+            if (view.annotationSourceReplacing || view.annotationDocument?.documentId !== doc.documentId || message.documentId !== view.documentId || message.openRequest !== view.openRequest) return;
           } catch (error) {
+            if (view.annotationSourceReplacing || view.annotationDocument?.documentId !== doc.documentId || message.openRequest !== view.openRequest) return;
             view.annotationSyncPending = true;
             view.annotationHydrationAllowed = false;
             view.annotationStorageUnavailable = true;
@@ -60638,6 +60640,7 @@ ${entry.actorId || "legacy"}`
           try {
             snapshot = await readSnapshot(result.document);
           } catch (error) {
+            if (view.annotationSourceReplacing || view.annotationDocument?.documentId !== doc.documentId || message.openRequest !== view.openRequest) return;
             view.annotationSyncPending = true;
             view.annotationHydrationAllowed = false;
             view.annotationStorageUnavailable = true;
@@ -61373,6 +61376,15 @@ ${entry.actorId || "legacy"}`
           log("annotation-document-renamed", { documentId: document.documentId, fromPath, toPath });
           return true;
         }
+        function beginSourceReplacement(view) {
+          const id = view.annotationDocument?.documentId;
+          if (id && [...documentViews.get(id) || []].some((candidate) => candidate !== view))
+            throw codedError("PDF_SOURCE_REPLACEMENT_BUSY", "\u8BF7\u5148\u5173\u95ED\u8FD9\u4EFD PDF \u7684\u5176\u4ED6\u9605\u8BFB\u5668");
+          view.annotationSourceReplacing = true;
+          releaseView(view);
+          if (id) sourceStates.delete(id);
+          view.annotationHydrationAllowed = false;
+        }
         function releaseView(view) {
           const id = view?.annotationDocument?.documentId;
           if (!id) return;
@@ -61527,6 +61539,7 @@ ${entry.actorId || "legacy"}`
           handleSourceModify,
           renamed,
           releaseView,
+          beginSourceReplacement,
           establishNewCopy,
           acceptOutlineUpdate,
           broadcastDocument,
@@ -91552,13 +91565,15 @@ class PdfReaderView extends EditableFileView {
         if (this.openRequest !== request || this.teardownStarted) throw new Error('文档已切换，取消解密');
         const current = new Uint8Array(await this.app.vault.readBinary(file));
         if (current.length !== original.length || current.some((value,index)=>value!==original[index])) throw new Error('PDF 已变化，取消覆盖');
+        this.plugin.annotationHost.beginSourceReplacement(this);
         await this.app.vault.modifyBinary(file, output.buffer.slice(output.byteOffset,output.byteOffset+output.byteLength));
         const verified = new Uint8Array(await this.app.vault.readBinary(file));
         if (verified.length!==output.length || verified.some((v,i)=>v!==output[i])) throw new Error('解密文件写入校验失败');
         if (document) await this.plugin.annotationHost.store.resetUnpairedSourceAfterDecrypt(document);
+        this.annotationSourceReplacing = false;
         new Notice('PDF 已解密，正在重新加载');
         await this.openFile(file);
-      })().catch(error => {new Notice(`解密失败：${error.message}`,10000);this.postToViewer({channel:CHANNEL,token:this.token,type:'decrypt-failed',documentId:this.documentId,openRequest:this.openRequest});}).finally(()=>{this.decrypting=false;});
+      })().catch(error => {new Notice(`解密失败：${error.message}`,10000);this.postToViewer({channel:CHANNEL,token:this.token,type:'decrypt-failed',documentId:this.documentId,openRequest:this.openRequest});}).finally(()=>{this.decrypting=false;this.annotationSourceReplacing=false;});
       return;
     }
     if (message.type === "runtime-log") {

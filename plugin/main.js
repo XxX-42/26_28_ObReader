@@ -3743,13 +3743,15 @@ class PdfReaderView extends EditableFileView {
         if (this.openRequest !== request || this.teardownStarted) throw new Error('文档已切换，取消解密');
         const current = new Uint8Array(await this.app.vault.readBinary(file));
         if (current.length !== original.length || current.some((value,index)=>value!==original[index])) throw new Error('PDF 已变化，取消覆盖');
+        this.plugin.annotationHost.beginSourceReplacement(this);
         await this.app.vault.modifyBinary(file, output.buffer.slice(output.byteOffset,output.byteOffset+output.byteLength));
         const verified = new Uint8Array(await this.app.vault.readBinary(file));
         if (verified.length!==output.length || verified.some((v,i)=>v!==output[i])) throw new Error('解密文件写入校验失败');
         if (document) await this.plugin.annotationHost.store.resetUnpairedSourceAfterDecrypt(document);
+        this.annotationSourceReplacing = false;
         new Notice('PDF 已解密，正在重新加载');
         await this.openFile(file);
-      })().catch(error => {new Notice(`解密失败：${error.message}`,10000);this.postToViewer({channel:CHANNEL,token:this.token,type:'decrypt-failed',documentId:this.documentId,openRequest:this.openRequest});}).finally(()=>{this.decrypting=false;});
+      })().catch(error => {new Notice(`解密失败：${error.message}`,10000);this.postToViewer({channel:CHANNEL,token:this.token,type:'decrypt-failed',documentId:this.documentId,openRequest:this.openRequest});}).finally(()=>{this.decrypting=false;this.annotationSourceReplacing=false;});
       return;
     }
     if (message.type === "runtime-log") {

@@ -530,7 +530,7 @@ function createPdfAnnotationHost({
 
   async function confirmPageIdentity(view, message) {
     const doc = view.annotationDocument;
-    if (!doc || message.documentId !== view.documentId || message.openRequest !== view.openRequest) return;
+    if (!doc || view.annotationSourceReplacing || message.documentId !== view.documentId || message.openRequest !== view.openRequest) return;
     const pageCount = Number.isSafeInteger(message.pageCount) && message.pageCount >= 0 ? message.pageCount : null;
     const identities = Array.isArray(message.orderedPageIdentities) &&
       message.orderedPageIdentities.length === pageCount &&
@@ -569,7 +569,9 @@ function createPdfAnnotationHost({
     let result;
     try {
       result = await store.updateSourceIdentity(identityInput);
+      if (view.annotationSourceReplacing || view.annotationDocument?.documentId !== doc.documentId || message.documentId !== view.documentId || message.openRequest !== view.openRequest) return;
     } catch (error) {
+      if (view.annotationSourceReplacing || view.annotationDocument?.documentId !== doc.documentId || message.openRequest !== view.openRequest) return;
       view.annotationSyncPending = true;
       view.annotationHydrationAllowed = false;
       view.annotationStorageUnavailable = true;
@@ -604,6 +606,7 @@ function createPdfAnnotationHost({
     try {
       snapshot = await readSnapshot(result.document);
     } catch (error) {
+      if (view.annotationSourceReplacing || view.annotationDocument?.documentId !== doc.documentId || message.openRequest !== view.openRequest) return;
       view.annotationSyncPending = true;
       view.annotationHydrationAllowed = false;
       view.annotationStorageUnavailable = true;
@@ -1299,6 +1302,16 @@ function createPdfAnnotationHost({
     return true;
   }
 
+  function beginSourceReplacement(view) {
+    const id = view.annotationDocument?.documentId;
+    if (id && [...(documentViews.get(id) || [])].some(candidate => candidate !== view))
+      throw codedError('PDF_SOURCE_REPLACEMENT_BUSY', '请先关闭这份 PDF 的其他阅读器');
+    view.annotationSourceReplacing = true;
+    releaseView(view);
+    if (id) sourceStates.delete(id);
+    view.annotationHydrationAllowed = false;
+  }
+
   function releaseView(view) {
     const id = view?.annotationDocument?.documentId;
     if (!id) return;
@@ -1456,6 +1469,7 @@ function createPdfAnnotationHost({
     handleSourceModify,
     renamed,
     releaseView,
+    beginSourceReplacement,
     establishNewCopy,
     acceptOutlineUpdate,
     broadcastDocument,

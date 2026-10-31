@@ -591,3 +591,23 @@ test("self-originated sidecar notifications do not re-enter checkpoint materiali
     "an unmatched external operation event must still refresh open Readers");
   host.dispose();
 });
+
+test('decrypt replacement retires the old source before file events and identity replies', async () => {
+  const adapter=makeAdapter(),app=makeApp(adapter),runtime=await createPdfHashRuntime();
+  const host=createHost({app,enableSingleJsonl:true,hashRuntime:runtime,identityHash:b=>createHash('sha256').update(b).digest('hex'),makeToken:()=> 'decrypt-test',deviceId:'decrypt-test'});
+  const view=makeView(app);const initial=await host.initializeView(view,view.sourceBytes);view.documentId=initial.documentId;
+  const oldDocument=view.annotationDocument;
+  host.beginSourceReplacement(view);
+  const before=view.messages.length;
+  app.vault.bytes=new TextEncoder().encode('new decrypted source bytes').buffer;
+  await host.handleSourceModify(view.documentFile);
+  await host.handleMessage(view,{type:'annotation-source-identity',documentId:view.documentId,openRequest:view.openRequest,pageCount:2,orderedPageIdentities:['ref:1R','ref:2R']});
+  assert.equal(view.messages.length,before,'retired source cannot send mismatch notices');
+  assert.notEqual(view.annotationSourceMismatch,true);
+  await host.store.resetUnpairedSourceAfterDecrypt(oldDocument);
+  view.annotationSourceReplacing=false;view.openRequest++;
+  const reopened=await host.initializeView(view,app.vault.bytes);view.documentId=reopened.documentId;
+  await host.handleMessage(view,{type:'annotation-source-identity',documentId:view.documentId,openRequest:view.openRequest,pageCount:2,orderedPageIdentities:['ref:1R','ref:2R']});
+  assert.equal(view.annotationHydrationAllowed,true);assert.equal(view.annotationSourceMismatch,false);
+  host.dispose();
+});
