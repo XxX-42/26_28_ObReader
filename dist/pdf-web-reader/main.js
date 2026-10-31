@@ -716,7 +716,7 @@ var __PDFReaderRectangleEmbed = (() => {
           loadFile() {
             if (!this.visible) return Promise.resolve();
             if (this.pendingLoad) return this.pendingLoad;
-            this.pendingLoad = Promise.resolve().then(() => this.refresh()).finally(() => {
+            this.pendingLoad = Promise.resolve().then(() => this.refresh({ checkUnchanged: !!this.target })).finally(() => {
               this.pendingLoad = null;
             });
             return this.pendingLoad;

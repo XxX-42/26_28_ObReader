@@ -162,7 +162,7 @@ function createRectangleEmbeds({ plugin, Component, resolveTarget, acquireDocume
     loadFile() {
       if (!this.visible) return Promise.resolve();
       if (this.pendingLoad) return this.pendingLoad;
-      this.pendingLoad = Promise.resolve().then(() => this.refresh()).finally(() => { this.pendingLoad = null; });
+      this.pendingLoad = Promise.resolve().then(() => this.refresh({ checkUnchanged: !!this.target })).finally(() => { this.pendingLoad = null; });
       return this.pendingLoad;
     }
     showMessage(message) {
