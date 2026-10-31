@@ -105,6 +105,7 @@
     requestedDocumentId: null,
     pendingVocabularySettings: null,
     readOnly: false,
+    encryptedPdf: false,
     autoSaveEnabled: true,
     autoSavePaused: false,
     autoSaveTimer: null,
@@ -1353,6 +1354,7 @@
     }
     const button = state.bridgeControls?.vocabularyToggleButton;
     if (!button) return;
+    button.disabled = state.encryptedPdf;
     button.setAttribute("aria-pressed", String(enabled));
     button.classList.toggle("is-active", enabled);
     button.title = enabled ? "LingQ 模式：开启" : "LingQ 模式：关闭";
@@ -1401,6 +1403,7 @@
   }
 
   function toggleVocabularyFromMenu(event) {
+    if (state.encryptedPdf) return;
     event?.preventDefault?.();
     event?.stopPropagation?.();
     const enabled = !state.vocabularyEnabled;
@@ -11598,6 +11601,8 @@
         state.hostHeavyLeaseRequired = message.heavyLeaseRequired;
       }
       state.rectangleRegion = null;
+      state.encryptedPdf = false;
+      document.getElementById("pdfReaderDecryptButton")?.remove();
       state.activeDocumentId = null;
       state.annotationSidebarController?.closeAndClear();
       updatePageNumberWidth(0);
@@ -11683,6 +11688,18 @@
       const parsedAt = performance.now();
 
       const { pdfDocument } = await waitForDocumentLoaded(app, session);
+      const metadata = await pdfDocument.getMetadata();
+      if (session.signal.aborted || state.disposed) return false;
+      state.encryptedPdf = !!metadata?.info?.EncryptFilterName;
+      if (state.encryptedPdf) {
+        const button = document.createElement('button');
+        button.id = 'pdfReaderDecryptButton'; button.className = 'toolbarButton';
+        button.textContent = '解密'; button.title = '解密并覆盖当前 PDF';
+        button.addEventListener('click', () => { button.disabled = true; button.textContent = '解密中…';
+          postToHost('decrypt-pdf', { documentId: state.activeDocumentId, openRequest: state.activeOpenRequest, pageCount: pdfDocument.numPages }); });
+        document.getElementById('toolbarViewerRight')?.prepend(button);
+      }
+
       if (session.signal.aborted || state.disposed) {
         return false;
       }
@@ -11819,6 +11836,8 @@
       }
       cleanupStorageObserver();
       state.rectangleRegion = null;
+      state.encryptedPdf = false;
+      document.getElementById("pdfReaderDecryptButton")?.remove();
       state.activeDocumentId = null;
       state.annotationSidebarController?.closeAndClear();
       updatePageNumberWidth(0);
@@ -11869,6 +11888,8 @@
   ];
 
   function setReadOnlyState(readOnly) {
+    readOnly = readOnly || state.encryptedPdf;
+    state.readOnly = readOnly;
     document.documentElement.toggleAttribute(
       "data-pdf-reader-readonly",
       readOnly,
@@ -12169,6 +12190,7 @@
       return;
     }
 
+    if (message.type === 'decrypt-failed') { const b=document.getElementById('pdfReaderDecryptButton'); if(b){b.disabled=false;b.textContent='解密';} return; }
     if (message.type === "vocab-status-error") {
       if (message.rendererGeneration !== rendererGeneration) return;
       state.vocabularyController?.handleStatusError?.(message);

@@ -16,6 +16,7 @@ const {
   WorkspaceLeaf,
   normalizePath,
 } = require("obsidian");
+/* BUILD:PDF_DECRYPT_REQUIRE */ const { decryptPdfBytes, validateDecrypted, readPairId } = require("./pdf-decrypt.cjs");
 /* BUILD:RECTANGLE_EMBED_REQUIRE */ const { createRectangleEmbeds, createRectangleDocumentPool, squareRegion } = require("./rectangle-embed.cjs");
 /* BUILD:SESSION_LOG_REQUIRE */ const { createSessionLog } = require("./session-log.cjs");
 function startSessionLog(plugin) {
@@ -3725,6 +3726,30 @@ class PdfReaderView extends EditableFileView {
       message.token !== this.token ||
       typeof message.type !== "string"
     ) {
+      return;
+    }
+    if (message.type === "decrypt-pdf") {
+      if (message.documentId !== this.documentId || message.openRequest !== this.openRequest || this.decrypting) return;
+      this.decrypting = true;
+      const file = this.documentFile || this.file, request = this.openRequest;
+      void (async () => {
+        const document = this.annotationDocument;
+        if (document?.pairId) throw new Error("已有外置批注的加密 PDF 暂不能直接覆盖");
+        const original = new Uint8Array(await this.app.vault.readBinary(file));
+        const output = await decryptPdfBytes(this.plugin, original);
+        await validateDecrypted(output, message.pageCount);
+        const expectedPair = this.annotationDocument?.pairId;
+        if (expectedPair && await readPairId(output) !== expectedPair) throw new Error('PDF 配对标识不一致，未覆盖');
+        if (this.openRequest !== request || this.teardownStarted) throw new Error('文档已切换，取消解密');
+        const current = new Uint8Array(await this.app.vault.readBinary(file));
+        if (current.length !== original.length || current.some((value,index)=>value!==original[index])) throw new Error('PDF 已变化，取消覆盖');
+        await this.app.vault.modifyBinary(file, output.buffer.slice(output.byteOffset,output.byteOffset+output.byteLength));
+        const verified = new Uint8Array(await this.app.vault.readBinary(file));
+        if (verified.length!==output.length || verified.some((v,i)=>v!==output[i])) throw new Error('解密文件写入校验失败');
+        if (document) await this.plugin.annotationHost.store.resetUnpairedSourceAfterDecrypt(document);
+        new Notice('PDF 已解密，正在重新加载');
+        await this.openFile(file);
+      })().catch(error => {new Notice(`解密失败：${error.message}`,10000);this.postToViewer({channel:CHANNEL,token:this.token,type:'decrypt-failed',documentId:this.documentId,openRequest:this.openRequest});}).finally(()=>{this.decrypting=false;});
       return;
     }
     if (message.type === "runtime-log") {

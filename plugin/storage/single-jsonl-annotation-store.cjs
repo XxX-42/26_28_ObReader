@@ -161,9 +161,16 @@ function createSingleJsonlAnnotationStore({adapter,root='00_Archive/20_PDFData',
     if(!target||target.header.relocation?.fromPath!==fromPath)return null;
     return {...target.document,pairId:target.pairId};
   }
+  async function resetUnpairedSourceAfterDecrypt(document) {
+    if (document.pairId || await core.readCurrent(document.sourcePath)) throw fail('V15_DECRYPT_PAIRED', '已有外置批注的加密 PDF 暂不能直接覆盖');
+    const current = provisional.get(document.sourcePath) || await deferred.lookup(document.sourcePath);
+    if (current && current.documentId !== document.documentId) throw fail('V15_IDENTITY_CONFLICT', '解密期间文档身份已变化');
+    await deferred.forget(document.sourcePath, document.documentId);
+    provisional.delete(document.sourcePath);
+  }
   function pathsFor(document){const paths=core.pathsFor(document.sourcePath);return {root,docKey:document.docKey,registry:registry.path,snapshot:paths.current,history:paths.history};}
   function affectsPath(document,path){const paths=pathsFor(document);return path===paths.registry||path===paths.snapshot||path===paths.history||path.startsWith(paths.snapshot+'.pending-');}
-  return {core,registry,documentForPath,documentForInterruptedRename,registerDocument,documentForIdentity,ensureDocumentIdentity,readDocument,appendOperations,updateSourceIdentity,renameDocument,pathsFor,affectsPath,
+  return {core,registry,resetUnpairedSourceAfterDecrypt,documentForPath,documentForInterruptedRename,registerDocument,documentForIdentity,ensureDocumentIdentity,readDocument,appendOperations,updateSourceIdentity,renameDocument,pathsFor,affectsPath,
     materializeSnapshot:readDocument,sourceProtocol:FORMAT,invalidateExternal(){},invalidateRegistry(){},
     inspectDevices:async()=>({protocol:FORMAT,devices:[],singleSharedFile:true}),establishNewCopy:input=>registerDocument({...input,newInstance:true})};
 }

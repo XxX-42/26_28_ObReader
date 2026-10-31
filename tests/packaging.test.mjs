@@ -65,6 +65,7 @@ async function expectedAssetFiles() {
     bundle: true, format: "iife", platform: "browser", target: ["es2022"],
     legalComments: "inline", banner: { js: `/* pdf-lib 1.17.1 MIT License\n${license.replaceAll("*/", "* /")}*/` }, write: false });
   return [
+    ...['qpdf.js','qpdf.wasm','LICENSE'].map(name=>({absolute:path.join(root,'node_modules/@jspawn/qpdf-wasm',name),path:`web/decrypt/${name}`})),
     ...(await listFiles(path.join(vendor, "build"), "build")),
     ...(await listFiles(path.join(vendor, "web"), "web")),
     { absolute: path.join(vendor, "LICENSE"), path: "LICENSE" },
@@ -150,7 +151,7 @@ test("built main embeds all runtime files with checked deterministic gzip and ha
 
   const expected = await expectedAssetFiles();
   assert.equal(payload.files.length, expected.length);
-  assert.equal(payload.files.length, 406);
+  assert.equal(payload.files.length, 409);
   assert.ok(payload.files.some((file) => file.path === "web/pdf-merge-worker.js"));
   assert.ok(payload.files.some((file) => file.path === "web/pdf-merge-worker-LICENSE.txt"));
   assert.deepEqual(

@@ -81,3 +81,14 @@ test('a failed first PDF pairing cannot acknowledge annotations before pairing i
  await assert.rejects(w.store.appendOperations({document,sourceHash:source.sourceHash,operations:[row]}),/partial PDF append/);
  assert.equal(attempts,2);assert.deepEqual((await w.store.core.readCurrent(document.sourcePath,pairId)).annotations,[]);
 });
+
+ test('decrypt reset is limited to unpaired documents and cannot discard annotations',async()=>{
+ const w=fixture(),doc=await w.store.registerDocument({sourcePath:'Books/decrypt.pdf',source});
+ await w.store.ensureDocumentIdentity(doc);
+ await w.store.resetUnpairedSourceAfterDecrypt(doc);
+ const next=await w.store.registerDocument({sourcePath:doc.sourcePath,source:{...source,sourceHash:'sha256-v1:'+'2'.repeat(64)}});
+ assert.equal(next.sourceMismatch,undefined);
+ await w.store.core.initialize({document:next,pairId,annotations:[row]});
+ await assert.rejects(w.store.resetUnpairedSourceAfterDecrypt(next),{code:'V15_DECRYPT_PAIRED'});
+ assert.equal((await w.store.core.readCurrent(next.sourcePath,pairId)).annotations[0].uuid,row.uuid);
+ });

@@ -28,6 +28,7 @@
     "ts-fsrs": "5.4.2"
   },
   "dependencies": {
+    "@jspawn/qpdf-wasm": "0.0.2",
     "dexie": "4.4.6",
     "pdf-lib": "1.17.1",
     "xxhash-wasm": "1.1.0"

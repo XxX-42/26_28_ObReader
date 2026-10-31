@@ -21,7 +21,7 @@ const vendor = path.join(root, "vendor", "pdfjs-generic-legacy");
 const adapters = path.join(root, "viewer-adapter");
 const output = path.join(root, "dist", "pdf-web-reader");
 const assetBundleId = "pdfjs-full-viewer-5.7.192-3f4171c02-fork-ink-session-guard-0.5.19-highlight-row-collision-0.12.1";
-const bundledRuntimeFileCount = 406;
+const bundledRuntimeFileCount = 409;
 const inputRuntimeFiles = [
   "input/interaction-intent.js",
   "input/interaction-mode.js",
@@ -288,6 +288,9 @@ runtimeInputs.push({
   bytes: Buffer.from(mergeWorkerLicense, "utf8"),
   path: "web/pdf-merge-worker-LICENSE.txt",
 });
+for (const name of ['qpdf.js', 'qpdf.wasm', 'LICENSE']) {
+  runtimeInputs.push({ path: `web/decrypt/${name}`, bytes: await readFile(path.join(root, 'node_modules/@jspawn/qpdf-wasm', name)) });
+}
 runtimeInputs.sort((left, right) =>
   left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
 );
@@ -349,7 +352,7 @@ const payload = {
 assert.equal(
   files.length,
   bundledRuntimeFileCount,
-  "The frozen viewer, bridge, merge worker, and required licenses must contain 406 files",
+  "The frozen viewer, bridge, merge worker, and required licenses must contain 409 files",
 );
 
 const requireMarker =
@@ -534,7 +537,10 @@ const inlinedSelectionCopyFormat = await inlineModule("selection-copy-format.cjs
 const rectangleEmbedMarker = /\/\* BUILD:RECTANGLE_EMBED_REQUIRE \*\/[^\n]+/;
 assert.match(sourceMain, rectangleEmbedMarker);
 const inlinedRectangleEmbed = await inlineModule("rectangle-embed.cjs", "__PDFReaderRectangleEmbed", "createRectangleEmbeds, createRectangleDocumentPool, squareRegion");
+const decryptMarker = /\/\* BUILD:PDF_DECRYPT_REQUIRE \*\/[^\n]+/;
+const inlinedDecrypt = await inlineModule("pdf-decrypt.cjs", "__PDFReaderDecrypt", "decryptPdfBytes, validateDecrypted, readPairId");
 const bundledMain = sourceMain
+  .replace(decryptMarker, () => inlinedDecrypt)
   .replace(rectangleEmbedMarker, () => inlinedRectangleEmbed)
   .replace(requireMarker, () => inlinedHelper)
   .replace(hashRuntimeMarker, () => inlinedHashRuntime)

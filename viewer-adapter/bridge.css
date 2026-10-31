@@ -1172,3 +1172,6 @@ html.pdf-reader-chord-pan #viewerContainer * { cursor: grabbing !important; user
 #pdfReaderRectangleRegionButton:not(.labeled) > span {
   width: auto; height: auto; overflow: visible; font-size: 20px; line-height: 1;
 }
+
+html[data-pdf-reader-readonly] #toolbarViewer button:disabled { opacity: .35; cursor: not-allowed; }
+#pdfReaderDecryptButton { width: auto; padding: 0 10px; font-size: 13px; }
