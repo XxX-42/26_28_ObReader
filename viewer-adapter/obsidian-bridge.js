@@ -2194,6 +2194,7 @@
   }) {
     let open = false;
     let docked = false;
+    let dockSide = "right";
     const dockButton = document.createElement("button");
     dockButton.type = "button";
     dockButton.className = "pdfReaderAnnotationDockButton";
@@ -2215,7 +2216,7 @@
     }
     function onResizeMove(event) {
       if (resizePointer !== event.pointerId) return;
-      const width = clampAnnotationSidebarWidth(window.innerWidth - event.clientX, window.innerWidth);
+      const width = clampAnnotationSidebarWidth(dockSide === "left" ? event.clientX : window.innerWidth - event.clientX, window.innerWidth);
       document.documentElement.style.setProperty("--pdf-reader-annotation-sidebar-width", `${width}px`);
       window.dispatchEvent(new Event("resize"));
     }
@@ -2230,13 +2231,43 @@
     resizeHandle.addEventListener("pointercancel", onResizeEnd);
     function syncDock() {
       document.documentElement.classList.toggle("pdfReaderAnnotationsDocked", open && docked);
+      document.documentElement.classList.toggle("pdfReaderAnnotationsDockedLeft", open && docked && dockSide === "left");
       menu.classList.toggle("pdfReaderAnnotationSidebarDocked", docked);
+      menu.classList.toggle("pdfReaderAnnotationSidebarDockedLeft", dockSide === "left");
       dockButton.textContent = docked ? "恢复浮窗" : "停靠右侧";
       dockButton.setAttribute("aria-pressed", String(docked));
       window.dispatchEvent(new Event("resize"));
     }
     function onDockClick() { docked = !docked; syncDock(); }
     dockButton.addEventListener("click", onDockClick);
+    const dockHeader = sidebar.querySelector("#editorCommentsSidebarHeader");
+    let dockDrag = null;
+    function onDockDragStart(event) {
+      if (!open || !docked || event.button !== 0 || event.target?.closest?.("button,input,select")) return;
+      event.preventDefault();
+      dockDrag = { pointerId: event.pointerId, startX: event.clientX, offset: 0 };
+      menu.classList.add("pdfReaderAnnotationDragging");
+      dockHeader.setPointerCapture?.(event.pointerId);
+    }
+    function onDockDragMove(event) {
+      if (!dockDrag || dockDrag.pointerId !== event.pointerId) return;
+      dockDrag.offset = event.clientX - dockDrag.startX;
+      menu.style.transform = `translateX(${dockDrag.offset}px)`;
+    }
+    function onDockDragEnd(event) {
+      if (!dockDrag || dockDrag.pointerId !== event.pointerId) return;
+      const moved = Math.abs(dockDrag.offset) > 8;
+      if (moved && event.type !== "pointercancel") dockSide = event.clientX < window.innerWidth / 2 ? "left" : "right";
+      dockDrag = null;
+      if (dockHeader.hasPointerCapture?.(event.pointerId)) dockHeader.releasePointerCapture(event.pointerId);
+      menu.classList.remove("pdfReaderAnnotationDragging");
+      menu.style.transform = "";
+      syncDock();
+    }
+    dockHeader?.addEventListener("pointerdown", onDockDragStart);
+    dockHeader?.addEventListener("pointermove", onDockDragMove);
+    dockHeader?.addEventListener("pointerup", onDockDragEnd);
+    dockHeader?.addEventListener("pointercancel", onDockDragEnd);
     let refreshFrame = null;
     let pendingTargetRefresh = false;
     let selectedUuid = null;
@@ -2497,6 +2528,9 @@
 
     function close() {
       open = false;
+      dockDrag = null;
+      menu.style.transform = "";
+      menu.classList.remove("pdfReaderAnnotationDragging");
       closeContextMenu();
       selectionBar?.remove(); selectionBar = null;
       if (selectionMode) listNeedsRender = true;
@@ -2651,6 +2685,10 @@
         resizeHandle.removeEventListener("pointerup", onResizeEnd);
         resizeHandle.removeEventListener("pointercancel", onResizeEnd);
         resizeHandle.remove();
+        dockHeader?.removeEventListener("pointerdown", onDockDragStart);
+        dockHeader?.removeEventListener("pointermove", onDockDragMove);
+        dockHeader?.removeEventListener("pointerup", onDockDragEnd);
+        dockHeader?.removeEventListener("pointercancel", onDockDragEnd);
         document.documentElement.style.removeProperty("--pdf-reader-annotation-sidebar-width");
         dockButton.removeEventListener("click", onDockClick);
         dockButton.remove();

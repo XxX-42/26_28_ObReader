@@ -621,12 +621,17 @@ body {
 }
 .pdfReaderAnnotationSidebarMenu.pdfReaderAnnotationSidebarDocked:not(.hidden) {
   position: fixed !important;
-  inset: var(--toolbar-height, 40px) 0 0 auto !important;
+  inset: var(--toolbar-height, 40px) auto 0 calc(100% - min(var(--pdf-reader-annotation-sidebar-width, 360px), 70vw)) !important;
   width: min(var(--pdf-reader-annotation-sidebar-width, 360px), 70vw);
   min-width: 0;
   max-height: none;
   border-radius: 0;
+  transition: left 180ms ease, transform 180ms ease;
 }
+.pdfReaderAnnotationSidebarMenu.pdfReaderAnnotationSidebarDockedLeft:not(.hidden) { left: 0 !important; }
+.pdfReaderAnnotationSidebarMenu.pdfReaderAnnotationDragging { transition: none; }
+.pdfReaderAnnotationSidebarDocked #editorCommentsSidebarHeader { cursor: grab; touch-action: none; }
+.pdfReaderAnnotationDragging #editorCommentsSidebarHeader { cursor: grabbing; }
 .pdfReaderAnnotationSidebarDocked > #editorCommentsSidebar {
   position: relative !important;
   inset: 0 auto auto 0 !important;
@@ -637,6 +642,10 @@ body {
 }
 .pdfReaderAnnotationsDocked #viewerContainer {
   inset-inline-end: min(var(--pdf-reader-annotation-sidebar-width, 360px), 70vw) !important;
+}
+.pdfReaderAnnotationsDockedLeft #viewerContainer {
+  inset-inline-start: min(var(--pdf-reader-annotation-sidebar-width, 360px), 70vw) !important;
+  inset-inline-end: 0 !important;
 }
 .pdfReaderAnnotationResizeHandle { display: none; }
 .pdfReaderAnnotationSidebarDocked .pdfReaderAnnotationResizeHandle {
@@ -650,6 +659,10 @@ body {
 }
 .pdfReaderAnnotationSidebarDocked .pdfReaderAnnotationResizeHandle:hover {
   background: color-mix(in srgb, var(--interactive-accent, #418dcc) 30%, transparent);
+}
+.pdfReaderAnnotationSidebarDockedLeft .pdfReaderAnnotationResizeHandle { left: auto; right: -5px; }
+@media (prefers-reduced-motion: reduce) {
+  .pdfReaderAnnotationSidebarMenu.pdfReaderAnnotationSidebarDocked { transition: none; }
 }
 
 #editorCommentsSidebarResizer {
