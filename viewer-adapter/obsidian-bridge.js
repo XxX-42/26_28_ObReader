@@ -140,6 +140,9 @@
     readerStateReady: false,
     readerStateTimer: null,
     pendingReaderState: null,
+    autoCopySelectionLinks: true,
+    autoCopySequence: 0,
+    autoCopySignature: null,
     annotationTargetTextByRuntimeId: new Map(),
     annotationSelectionGroups: new Map(),
     pendingHighlightSelection: null,
@@ -619,6 +622,22 @@
       sourceHash: actual.sourceHash,
       ...stableRange,
     };
+  }
+
+  function autoCopySelectedLinks() {
+    if (!state.autoCopySelectionLinks || state.readOnly || state.vocabularyEnabled || state.editorMode !== 0) return;
+    try {
+      const actual=state.actualSourceIdentity;
+      const captures=state.textSelectionController.captureSelectedPages().map(({pageRoot,anchor})=>{
+        const pageNumber=readerPageNumberForRoot(pageRoot),pageIndex=pageNumber-1;
+        return {kind:'selection',pageNumber,pageIndex,pageIdentity:actual?.orderedPageIdentities?.[pageIndex],sourceHash:actual?.sourceHash,...anchor};
+      });
+      if (!captures.length || captures.some(c=>!c.pageIdentity)) return;
+      const signature=JSON.stringify(captures.map(c=>[c.pageIndex,c.textPosition,c.exactQuote]));
+      if(signature===state.autoCopySignature)return;
+      state.autoCopySignature=signature;
+      postToHost('reader-auto-copy-selection',{documentId:state.activeDocumentId,openRequest:state.activeOpenRequest,sequence:++state.autoCopySequence,captures});
+    } catch(error) { showStatus(error.message); }
   }
 
   function captureReaderOccurrence(pageNumber, startIndex, endIndex, expectedSurface) {
@@ -3204,6 +3223,12 @@
     statusBarButton.append(statusBarLabel);
     statusBarButton.addEventListener("click", () => postToHost("status-bar-toggle"));
     secondaryContainer.insertBefore(statusBarButton, saveButton);
+    const autoCopyButton=document.createElement('button');
+    autoCopyButton.id='pdfReaderAutoCopySelectionToggle';autoCopyButton.type='button';autoCopyButton.className='toolbarButton labeled';
+    const autoCopyLabel=document.createElement('span');autoCopyLabel.textContent='选区自动复制链接';autoCopyButton.append(autoCopyLabel);
+    autoCopyButton.setAttribute('aria-pressed',String(state.autoCopySelectionLinks));
+    autoCopyButton.addEventListener('click',()=>postToHost('auto-copy-selection-toggle'));
+    secondaryContainer.insertBefore(autoCopyButton,saveButton);
     const group = document.createElement("div");
     group.className = "toolbarHorizontalGroup pdfReaderBridgeControls";
     group.setAttribute("aria-label", "PDF 撤销与重做");
@@ -9855,6 +9880,7 @@
       }
       try {
         if (!cancel && reason === "pointerup") finishPenHighlightFallback(pointer);
+        if (!cancel && reason === 'pointerup' && pointer.pointerType === 'mouse' && pointer.button === 0 && pointer.kind === 'text-selection') autoCopySelectedLinks();
       } catch (error) {
         recordAnnotationTrackingFailure("pointer.highlight-end", error);
       } finally {
@@ -9895,6 +9921,8 @@
   }
 
   function onBridgePointerDown(intent, controls) {
+    state.autoCopySignature=null;
+    postToHost('reader-auto-copy-cancel',{documentId:state.activeDocumentId,openRequest:state.activeOpenRequest,sequence:++state.autoCopySequence});
     cancelManualMomentum();
     invalidatePendingPenHighlight();
     dismissToolbarParameterPopups(intent);
@@ -10953,6 +10981,8 @@
   }
 
   function queueOpen(message) {
+    state.autoCopySelectionLinks=message.autoCopySelectionLinks!==false;
+    state.autoCopySignature=null;
     if (state.readerStateReady) saveReaderStateNow();
     state.readerStateReady = false;
     state.pendingReaderState = null;
@@ -11662,6 +11692,11 @@
       return;
     }
 
+    if(message.type==='auto-copy-selection-preference'){
+      state.autoCopySelectionLinks=message.enabled!==false;
+      document.getElementById('pdfReaderAutoCopySelectionToggle')?.setAttribute('aria-pressed',String(state.autoCopySelectionLinks));
+      return;
+    }
     if (message.type === 'reader-state-restore') {
       if (message.documentId !== state.activeDocumentId || message.openRequest !== state.activeOpenRequest) return;
       state.pendingReaderState = {state:message.state,restorePosition:message.restorePosition};

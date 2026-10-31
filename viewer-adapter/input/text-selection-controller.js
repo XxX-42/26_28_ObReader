@@ -170,6 +170,28 @@
       };
     }
 
+    captureSelectedPages() {
+      const selection = this.getSelection();
+      if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return [];
+      const original = selection.getRangeAt(0);
+      const pages = [];
+      for (const layer of this.document.querySelectorAll('.page .textLayer')) {
+        if (!original.intersectsNode(layer)) continue;
+        const flat = flattenTextLayer(layer);
+        if (!flat?.nodes.length) continue;
+        const first=flat.nodes[0],last=flat.nodes.at(-1),range=this.document.createRange();
+        range.setStart(first.node,0);range.setEnd(last.node,last.node.length);
+        if (range.compareBoundaryPoints(0,original)<0) range.setStart(original.startContainer,original.startOffset);
+        if (range.compareBoundaryPoints(2,original)>0) range.setEnd(original.endContainer,original.endOffset);
+        if (range.collapsed || !range.toString().trim()) continue;
+        const root=layer.closest('.page');
+        const anchor=this.captureRangeAnchor(layer,{startContainer:range.startContainer,startOffset:range.startOffset,endContainer:range.endContainer,endOffset:range.endOffset,text:range.toString(),rect:range.getBoundingClientRect()},root);
+        if (!anchor) throw new Error('无法完整捕获跨页选区。');
+        pages.push({pageRoot:root,anchor});
+      }
+      return pages;
+    }
+
     rangeForNativeSelection(textLayer, value) {
       if (!textLayer || !this.document?.createRange || typeof value !== "string") return null;
       const match = /^(\d{1,6}),(\d{1,6}),(\d{1,6}),(\d{1,6})$/.exec(value);

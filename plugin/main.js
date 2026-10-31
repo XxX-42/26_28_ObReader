@@ -3880,6 +3880,19 @@ class PdfReaderView extends EditableFileView {
         if (message.rendererGeneration !== this.rendererGeneration || this.teardownStarted) return;
         void this.plugin.setStatusBarEnabled(!this.plugin.settings.showStatusBar);
         break;
+      case 'auto-copy-selection-toggle':
+        this.plugin.settings.autoCopySelectionLinks=this.plugin.settings.autoCopySelectionLinks===false;
+        void this.plugin.saveSettings();
+        for(const view of this.plugin.views)view.postToViewer({channel:CHANNEL,token:view.token,type:'auto-copy-selection-preference',enabled:this.plugin.settings.autoCopySelectionLinks});
+        break;
+      case 'reader-auto-copy-cancel':
+        if(message.documentId===this.documentId&&message.openRequest===this.openRequest)this.autoCopySelectionSequence=message.sequence;
+        break;
+      case 'reader-auto-copy-selection':
+        if(message.documentId!==this.documentId||message.openRequest!==this.openRequest||message.rendererGeneration!==this.rendererGeneration)return;
+        this.autoCopySelectionSequence=message.sequence;
+        void this.plugin.copySelectionLinks(this,message).catch(error=>this.setStatus(error.message));
+        break;
       case "opened":
         if (
           message.documentId !== this.documentId ||
@@ -4040,6 +4053,7 @@ class PdfReaderView extends EditableFileView {
       vocabularyDisplayMode: normalizeVocabularyDisplayMode(this.plugin.settings.vocabularyDisplayMode),
       vocabularyWordDisplayMode: this.plugin.settings.vocabularyWordDisplayMode === "roots" ? "roots" : "whole",
       preferredAnnotationToolMode: normalizeAnnotationToolMode(this.plugin.settings.lastAnnotationToolMode),
+      autoCopySelectionLinks: this.plugin.settings.autoCopySelectionLinks !== false,
       preferredAnnotationToolColors: normalizeAnnotationToolColors(this.plugin.settings.annotationToolColors),
       heavyLeaseRequired: this.plugin.isMobileRuntime,
       revision: restore?.revision ?? this.currentRevision,
@@ -4418,6 +4432,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.settings = {
       autoSave: true,
       showStatusBar: false,
+      autoCopySelectionLinks: true,
       vocabularyEnabled: false,
       vocabularyHighlightLevels: normalizeVocabularyHighlightLevels(null),
       vocabularyDisplayMode: "all",
@@ -5632,6 +5647,23 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return true;
   }
 
+  async copySelectionLinks(view,message) {
+    if(this.settings.autoCopySelectionLinks===false||!Array.isArray(message.captures)||!message.captures.length)return;
+    if(message.captures.some((capture,i)=>capture.kind!=='selection'||(i>0&&capture.pageIndex!==message.captures[i-1].pageIndex+1)))throw new Error('跨页选区不完整，剪贴板保持不变。');
+    const identity={documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration};
+    const current=()=>view.isCurrentReaderAnchorIdentity(identity)&&view.autoCopySelectionSequence===message.sequence;
+    const links=[];
+    for(const capture of message.captures){
+      if(!current())return;
+      const requestId=makeToken();
+      view.pendingReaderAnchorCaptures.set(requestId,{...identity,mode:'auto',sequence:message.sequence,collectLink:link=>links.push(link)});
+      await this.handleReaderAnchorCapture(view,{...message,requestId,capture});
+    }
+    if(links.length!==message.captures.length||!current())return;
+    const work=(this.autoCopyClipboardQueue||Promise.resolve()).catch(()=>{}).then(async()=>{if(current())await this.copyReaderText(links.join('\n'));});
+    this.autoCopyClipboardQueue=work;await work;
+  }
+
   async handleReaderAnchorCapture(view, message) {
     const pending = view.pendingReaderAnchorCaptures.get(message.requestId);
     if (!pending) return true;
@@ -5798,6 +5830,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       ? `${capture.exactQuote.split("\n").map((line) => `> ${line}`).join("\n")}\n\n${link}`
       : link;
     if (!isCurrent()) return true;
+    if(pending.collectLink){pending.collectLink(link);return true;}
     await this.copyReaderText(output);
     if (!isCurrent()) return true;
     new Notice(capture.kind === "selection" ? "已复制带稳定 Selection Anchor 的 PDF 链接。" : "已复制 PDF 链接。", 4000);
