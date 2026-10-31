@@ -1252,7 +1252,7 @@ test(
     await page.mouse.move(offset.x + viewerCenter.x, offset.y + viewerCenter.y);
     await page.mouse.down({ button:"middle" });
     await viewer.waitForSelector(".pdfToolWheel");
-    await page.mouse.move(offset.x + viewerCenter.x + 70, offset.y + viewerCenter.y + 70);
+    await page.mouse.move(offset.x + viewerCenter.x, offset.y + viewerCenter.y + 150);
     await page.mouse.up({ button:"middle" });
     await viewer.waitForFunction(
       () => !document.querySelector(".pdfToolWheel"),
