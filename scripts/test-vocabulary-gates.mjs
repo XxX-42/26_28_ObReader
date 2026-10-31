@@ -213,6 +213,8 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/reader-anchor-store.test.mjs",
     "tests/auto-copy-selection-links.test.mjs",
     "tests/selection-copy-format.test.mjs",
+    "tests/reader-backlink-presentation.test.mjs",
+    "tests/linked-highlight.test.mjs",
     "tests/resource-startup-pair-support.test.mjs",
     "tests/semantic-anchor.test.mjs",
     "tests/semantic-services.test.mjs",

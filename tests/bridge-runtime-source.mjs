@@ -18,6 +18,7 @@ const inputRuntimeFiles = [
   "input-router.js",
   "annotation-tool-colors.js",
   "tool-wheel-color-controller.js",
+  "floating-pdf-outline-controller.js",
   "mouse-chord-pan-controller.js",
 ];
 

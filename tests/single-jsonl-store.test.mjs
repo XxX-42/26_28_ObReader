@@ -170,6 +170,26 @@ test('rename moves both named files while retaining pair, UUID, version and rece
   assert.equal(w.files.has(s.pathsFor(document.sourcePath).current),false);assert.equal(w.files.has(s.pathsFor(document.sourcePath).history),false);
 });
 
+test('linked Highlight JSONL survives fresh Store recovery and repeated PDF renames without losing source metadata',async()=>{
+  const w=world(),s=w.store();
+  const a=annotation('reader-link:stable-anchor');
+  a.payload.editor={annotationType:9,pageIndex:4,rect:[10,20,60,40],quadPoints:[10,40,60,40,10,20,60,20],
+    color:[255,255,152],opacity:1,text:'完整原文',readerLink:{version:1,anchorId:'stable-anchor',
+      pdfTarget:`${document.sourcePath}#page=5&obreader=sel.stable-anchor`}};
+  await s.initialize({document,pairId,annotations:[a]});
+  let from=document.sourcePath;
+  for(const to of ['Archive/中文 新名字.pdf','Books/移动后/原文.pdf']){
+    const before=await w.store().readCurrent(from,pairId);
+    await w.store().renameDocument({fromPath:from,toPath:to,pairId});
+    const after=await w.store().readCurrent(to,pairId);
+    const expected=structuredClone(before.annotations);
+    expected[0].payload.editor.readerLink.pdfTarget=`${to}#page=5&obreader=sel.stable-anchor`;
+    assert.deepEqual(after.annotations,expected);
+    assert.equal(after.pairId,pairId);assert.equal(after.document.documentId,document.documentId);
+    from=to;
+  }
+});
+
 test('interrupted rename resumes from verified new files without losing annotations or history',async()=>{
   const w=world(),s=w.store();await s.initialize({document,pairId,annotations:[annotation('A')]});
   const toPath='Other/new.pdf',original=w.adapter.remove;

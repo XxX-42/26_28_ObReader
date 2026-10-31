@@ -167,6 +167,7 @@ function createHostHarness(hashRuntime) {
         pageNumber: message.pageNumber, pageIndex: message.pageIndex,
         pageIdentity: message.pageIdentity,
         backlinkCount: result.rows.length, markers: result.markers,
+        referencedSelectionIds: pageIndex.referencedSelectionIds, pdfPath: state.currentPdfPath,
         backlinkLookupMs: 0, anchorResolveMs: 0, pageIndexCacheHit: true,
       };
     }
@@ -425,6 +426,10 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
       const viewer = await frame.evaluate((point) => ({ point,
         hit: document.elementFromPoint(point.x, point.y)?.outerHTML,
         currentPage: PDFViewerApplication.pdfViewer.currentPageNumber,
+        mode: window.__pdfReaderBridgeState.editorMode,
+        nativeMode: PDFViewerApplication.pdfViewer.annotationEditorMode,
+        closeControl: window.__pdfReaderBridgeState.closeControl,
+        linked: [...window.__pdfReaderBridgeState.annotationUuidByRuntimeId].filter(([,id]) => id.startsWith('reader-link:')),
         ranges: [...(CSS.highlights.get("pdfReaderMarkdownBacklinks") || [])].map((range) => ({
           text: range.toString(), rects: [...range.getClientRects()].map((rect) => rect.toJSON()) })),
         activeRequest: window.__pdfReaderBridgeState?.readerBacklinkActiveRequest,
@@ -517,13 +522,41 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
     const parsedSelectionLink = parseReaderLinkFragment(selectionLink.link.slice(selectionLink.link.indexOf("#") + 1));
     const storedAnchor = await host.anchorStore.get(docKey, parsedSelectionLink.target.id, documentId);
     assert.equal(storedAnchor.anchorId, anchor.anchorId, "the real Anchor Store must resolve the parsed Markdown target");
+    await frame.evaluate(() => {
+      const registry = CSS.highlights, set = registry.set, remove = registry.delete;
+      window.__readerFocusTrace = [];
+      registry.set = function(name, value) {
+        if (name === 'pdfReaderAnchorFocusText') window.__readerFocusTrace.push({ on: true, at: performance.now() });
+        return set.call(this, name, value);
+      };
+      registry.delete = function(name) {
+        if (name === 'pdfReaderAnchorFocusText') window.__readerFocusTrace.push({ on: false, at: performance.now() });
+        return remove.call(this, name);
+      };
+      window.__restoreReaderFocusTrace = () => { registry.set = set; registry.delete = remove; };
+    });
     const selectionNavigation = await navigateMarkdownTargetInViewer({ kind: "selection", id: parsedSelectionLink.target.id,
       pageIndex: storedAnchor.pageIndexHint, pageIdentity: storedAnchor.pageIdentity, anchor: storedAnchor });
     assert.equal(selectionNavigation.ok, true, "the actual Viewer should focus the Selection Anchor resolved from Markdown");
     assert.ok(await frame.evaluate(() => window.CSS?.highlights?.get("pdfReaderAnchorFocusText")?.size > 0),
       "the exact restored selection range must receive the Viewer temporary focus highlight");
+    const blink = await frame.evaluate(async () => {
+      // Measure from actual Viewer paint, not from the later Host ACK.
+      const first = window.__readerFocusTrace.find(entry => entry.on);
+      try {
+        await new Promise(resolve => setTimeout(resolve, Math.max(0, first.at + 3100 - performance.now())));
+        return { events: window.__readerFocusTrace.slice(window.__readerFocusTrace.indexOf(first)),
+          ended: !CSS.highlights.get('pdfReaderAnchorFocusText') };
+      } finally { window.__restoreReaderFocusTrace(); }
+    });
+    assert.deepEqual(blink.events.map(entry => entry.on), [true, false, true, false, true, false, false]);
+    assert.ok(blink.events.at(-1).at - blink.events[0].at >= 3000, 'focus lifetime is at least three seconds from actual paint');
+    assert.equal(blink.ended, true, 'exact-range focus is cleaned after three seconds');
     await refreshPage();
-    await frame.waitForFunction(() => Boolean(window.CSS?.highlights?.get("pdfReaderMarkdownBacklinks")), { timeout: 8_000 });
+    assert.equal(await frame.evaluate(() => CSS.highlights.has('pdfReaderMarkdownBacklinks')), false,
+      'linked selection paint must use native PDF.js editors, never opaque text-layer CSS fill');
+    await frame.waitForFunction(() => [...window.__pdfReaderBridgeState.annotationUuidByRuntimeId.values()]
+      .some(id => id.startsWith('reader-link:')), { timeout: 8_000 });
     const selectionBadge = await frame.evaluate((id) => {
       const badge = document.querySelector(`.pdfReaderSelectionBacklinkBadge[data-backlink-target-id="${id}"]`);
       if (!badge) return null;
@@ -534,11 +567,48 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
     assert.equal(selectionBadge.text, "🔗");
     assert.equal(selectionBadge.kind, "selection");
     assert.ok(selectionBadge.width > 0 && selectionBadge.height > 0);
+    const referenceColors = {};
+    for (const [name, color] of [['red', '#FF0000'], ['green', '#00FF00']]) {
+      await page.evaluate(({color, rendererGeneration}) => window.__readerHostPost({ type: 'annotation-tool-color-preference-update',
+        documentId: window.__readerBacklinkE2E.identity.documentId, openRequest: 1, rendererGeneration, colors: { 9: color } }), {color, rendererGeneration});
+      await frame.waitForFunction(color => document.documentElement.style.getPropertyValue('--pdf-reader-highlight-color') === color, {}, color);
+      await refreshPage();
+      referenceColors[name] = await frame.evaluate(() => {
+        const state = window.__pdfReaderBridgeState;
+        const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
+        const [id] = [...state.annotationUuidByRuntimeId].find(([id, uuid]) => uuid.startsWith('reader-link:') && manager.getEditor(id));
+        const editor = manager.getEditor(id);
+        const payload = editor.serialize();
+        return { color: editor.color, payload: { ...payload, quadPoints: Array.from(payload.quadPoints) },
+          link: state.externalAnnotationRows.get(state.annotationUuidByRuntimeId.get(id)).editor.readerLink };
+      });
+    }
+    assert.equal(referenceColors.red.color.toLowerCase(), '#ff0000');
+    assert.equal(referenceColors.green.color.toLowerCase(), '#00ff00');
+    assert.equal(referenceColors.green.payload.opacity, 1);
+    assert.equal(referenceColors.green.link.anchorId, anchor.anchorId);
+    assert.ok(referenceColors.green.payload.quadPoints.length >= 8);
+    const protectedDeletion = await frame.evaluate(() => {
+      const state=window.__pdfReaderBridgeState, manager=PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
+      const [id,uuid]=[...state.annotationUuidByRuntimeId].find(([id,uuid])=>uuid.startsWith('reader-link:')&&manager.getEditor(id));
+      const editor=manager.getEditor(id), before=Array.from(editor.serialize().quadPoints);
+      editor.remove();
+      manager.deleteEditor(editor);
+      return {same:manager.getEditor(id)===editor, connected:editor.div.isConnected, uuid,
+        before,after:Array.from(editor.serialize().quadPoints)};
+    });
+    assert.equal(protectedDeletion.same,true,'eraser/remove and delete command cannot erase a referenced highlight');
+    assert.equal(protectedDeletion.connected,true);
+    assert.deepEqual(protectedDeletion.after,protectedDeletion.before);
+    const durableLinked = await page.evaluate(() => window.__readerBacklinkE2E.messages
+      .filter(message=>message.type==='save').flatMap(message=>message.operations||[]));
+    assert.ok(durableLinked.some(operation=>operation.uuid===protectedDeletion.uuid&&
+      operation.payload?.editor?.readerLink?.anchorId===anchor.anchorId), 'ordinary save includes linked metadata in its durable operation payload');
     const selectionPoint = await frame.evaluate(() => {
-      const ranges = [...(window.CSS.highlights.get("pdfReaderMarkdownBacklinks") || [])];
+      const ranges = window.__pdfReaderBridgeState.readerBacklinkHighlights || [];
       const target = ranges.find((range) => range.toString().startsWith("Dynamic languages"));
       const rect = target?.getBoundingClientRect();
-      if (!rect) throw new Error("The actual CSS Highlight range was not painted");
+      if (!rect) throw new Error("The native linked Highlight range was not resolved");
       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
     });
     const beforeSelectionOpen = await targetOpenCount();
@@ -559,7 +629,7 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
     await refreshPage();
     const duplicateBefore = await targetOpenCount();
     const refreshedSelectionPoint = await frame.evaluate((quote) => {
-      const ranges = [...(window.CSS.highlights.get("pdfReaderMarkdownBacklinks") || [])];
+      const ranges = window.__pdfReaderBridgeState.readerBacklinkHighlights || [];
       const target = ranges.find((range) => range.toString().startsWith(quote));
       if (!target) throw new Error(`Selection backlink range for ${quote} was not restored after page refresh`);
       const rect = target.getBoundingClientRect();

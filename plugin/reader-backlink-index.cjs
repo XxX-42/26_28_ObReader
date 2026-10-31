@@ -156,6 +156,13 @@ async function buildReaderBacklinkPageIndex({
     anchorsById.set(anchorId, { anchor, rows: linkedRows });
   }
 
+  const referencedSelectionIds = new Set(selectionRows.keys());
+  for (const annotation of liveAnnotations.values()) {
+    const link = annotation.editor?.readerLink || annotation.payload?.editor?.readerLink;
+    if (link?.version === 1 && typeof link.anchorId === "string" &&
+        index.hasCompactSelectionReference?.(link.anchorId)) referencedSelectionIds.add(link.anchorId);
+  }
+
   const immutablePage = (pageIdentity) => {
     const page = pages.get(pageIdentity);
     if (!page) return { rows: [], markers: [] };
@@ -193,6 +200,7 @@ async function buildReaderBacklinkPageIndex({
       return normalizeRows(values);
     },
     anchorCount: anchorsById.size,
+    referencedSelectionIds: [...referencedSelectionIds],
   });
 }
 
@@ -373,7 +381,31 @@ function createReaderBacklinkIndex() {
     return [...bySource.keys()].filter((sourcePath) => sourcePath.startsWith(prefix)).sort();
   }
 
-  return Object.freeze({ replaceFile, removeFile, get, getDocument, getByPdfPath,
+  // Move the existing rows atomically while MetadataCache catches up. This is
+  // an identity-preserving source move, not evidence that references vanished.
+  function renameFile(from, to) {
+    if (!from || !to || from === to || !bySource.has(from)) return false;
+    if (bySource.has(to)) return false;
+    const sourceRows = bySource.get(from), moved = new Map();
+    for (const [key, ids] of sourceRows) {
+      const table = byTarget.has(key) ? byTarget : byPdfRoute.has(key) ? byPdfRoute : byCompactSelectionId;
+      const rows = table.get(key), next = new Set();
+      for (const id of ids) {
+        const row = rows?.get(id);
+        if (!row) continue;
+        rows.delete(id);
+        const newId = `${to}\0${row.offset}\0${key}`;
+        rows.set(newId, Object.freeze({ ...row, sourcePath: to }));
+        next.add(newId);
+      }
+      moved.set(key, next);
+    }
+    bySource.delete(from); bySource.set(to, moved); revision += 1;
+    return true;
+  }
+
+  return Object.freeze({ replaceFile, removeFile, renameFile, get, getDocument, getByPdfPath,
+    hasCompactSelectionReference: anchorId => (byCompactSelectionId.get(`anchor:${anchorId}`)?.size || 0) > 0,
     getCompactSelectionAnchorIds, bindCompactSelectionAnchor, clearCompactSelectionBinding,
     getSourcePathsUnder,
     get size() { return byTarget.size + byPdfRoute.size + byCompactSelectionId.size; },

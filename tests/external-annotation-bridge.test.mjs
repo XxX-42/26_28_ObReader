@@ -460,7 +460,7 @@ test("annotation UUID navigation uses the existing rendered editor and page iden
   assert.deepEqual(await navigateToAnnotationUuid("durable-uuid", 3, () => false), {
     ok: false, reason: "stale-session",
   });
-  assert.match(functionSource("navigateReaderAnchor"), /navigateToAnnotationUuid\(target\.id, pageIndex, isCurrent\)/,
+  assert.match(functionSource("navigateReaderAnchor"), /navigateToAnnotationUuid\(target\.id, pageIndex, isCurrent, true\)/,
     "Markdown annotation backlinks and the sidebar share the same UUID navigation helper");
 });
 

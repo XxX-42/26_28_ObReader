@@ -28,7 +28,7 @@ function extractFunction(name) {
     if (char === "/" && next === "*") { blockComment = true; index += 1; continue; }
     if (["'", '"', "`"].includes(char)) { quote = char; continue; }
     if (char === "{") depth += 1;
-    if (char === "}" && --depth === 0) return bridge.slice(start, index + 1);
+    if (char === "}" && --depth === 0) return bridge.slice(bridge.slice(start - 6, start) === 'async ' ? start - 6 : start, index + 1);
   }
   throw new Error(`Unterminated ${name}`);
 }
@@ -52,6 +52,8 @@ function fixture() {
     const textLayerForPage = () => ({});
     const performanceNow = () => 0;
     const runtimeLogRecord = () => {};
+    const reconcileLinkedHighlights = async () => {};
+    const sendError = message => { throw new Error(message); };
     const postToHost = (type, payload) => { queries.push({ type, ...payload }); return true; };
     state.backlinkInteractionController = new window.PdfReaderInputRuntime.BacklinkInteractionController({ documentRef: document });
     ${functions}

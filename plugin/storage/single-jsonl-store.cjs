@@ -242,7 +242,13 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
         if(history.pending)await publishPrepared(from.history,history.text,history.final,history.pending);
         historyText=history.text;
         relocation={fromPath,currentDigest:digest(sourceText),historyDigest:digest(historyText)};
-        next=encode({...source.header,document:{...source.document,sourcePath:toPath},relocation},stateRows(source));
+        const rows=stateRows(source).map(row=>{
+          const editor=row.value?.payload?.editor,link=editor?.readerLink;
+          if(row.type!=='annotation'||link?.version!==1||typeof link.anchorId!=='string')return row;
+          return {...row,value:{...row.value,payload:{...row.value.payload,editor:{...editor,readerLink:{...link,
+            pdfTarget:`${toPath}#page=${row.value.pageIndex+1}&obreader=sel.${encodeURIComponent(link.anchorId)}`}}}}};
+        });
+        next=encode({...source.header,document:{...source.document,sourcePath:toPath},relocation},rows);
         if(targetText!==null&&targetText!==next)throw error('V15_PATH_CONFLICT','Rename destination contains different annotation data.');
       }else{
         if(targetText===null)throw error('V15_DOCUMENT_MISSING','Neither side of the rename has verified annotation data.');

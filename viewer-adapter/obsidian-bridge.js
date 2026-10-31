@@ -725,25 +725,30 @@
     if (state.readerAnchorFocusTimer) clearTimeout(state.readerAnchorFocusTimer);
     state.readerAnchorFocusTimer = null;
     state.readerAnchorFocusPage?.classList?.remove?.("pdfReaderAnchorFocusPage");
+    state.readerAnchorFocusPage?.classList?.remove?.("pdfReaderAnchorFocusAnnotation");
     state.readerAnchorFocusPage = null;
     try { window.CSS?.highlights?.delete?.("pdfReaderAnchorFocusText"); } catch {}
     state.readerAnchorFocusFallbackNodes?.forEach((node) => node.remove?.());
     state.readerAnchorFocusFallbackNodes = null;
+    state.readerAnchorFocusRange = null;
   }
 
-  function showTemporaryReaderAnchorFocus(pageRoot, range = null) {
+  function showTemporaryReaderAnchorFocus(pageRoot, range = null, annotation = false) {
     clearTemporaryReaderAnchorFocus();
     if (!pageRoot) return false;
+    let blinkRange = null;
     if (!range) {
-      pageRoot.classList?.add?.("pdfReaderAnchorFocusPage");
+      pageRoot.classList?.add?.(annotation ? "pdfReaderAnchorFocusAnnotation" : "pdfReaderAnchorFocusPage");
       state.readerAnchorFocusPage = pageRoot;
     } else {
       const focusRange = range.cloneRange?.() || range;
+      state.readerAnchorFocusRange = focusRange;
       let installed = false;
       try {
         const HighlightCtor = window.Highlight;
         if (HighlightCtor && window.CSS?.highlights?.set) {
           window.CSS.highlights.set("pdfReaderAnchorFocusText", new HighlightCtor(focusRange));
+          blinkRange = () => new HighlightCtor(focusRange);
           installed = true;
         }
       } catch {}
@@ -767,11 +772,20 @@
         }
       }
     }
-    state.readerAnchorFocusTimer = setTimeout(clearTemporaryReaderAnchorFocus, 1800);
+    let step = 0;
+    const tick = () => {
+      if (++step >= 6 || state.disposed) { clearTemporaryReaderAnchorFocus(); return; }
+      if (blinkRange) {
+        if (step % 2 === 0) window.CSS.highlights.set("pdfReaderAnchorFocusText", blinkRange());
+        else window.CSS.highlights.delete("pdfReaderAnchorFocusText");
+      }
+      state.readerAnchorFocusTimer = setTimeout(tick, 500);
+    };
+    state.readerAnchorFocusTimer = setTimeout(tick, 500);
     return true;
   }
 
-  async function navigateToAnnotationUuid(uuid, pageIndex, sessionGuard = () => true) {
+  async function navigateToAnnotationUuid(uuid, pageIndex, sessionGuard = () => true, flash = false) {
     if (typeof uuid !== "string" || !uuid || !Number.isSafeInteger(pageIndex) || pageIndex < 0) {
       return { ok: false, reason: "invalid-annotation-target" };
     }
@@ -802,6 +816,7 @@
     if (!sessionGuard()) return { ok: false, reason: "stale-session" };
     if (!editorNode) return { ok: false, reason: "annotation-rendered-target-unresolved" };
     editorNode.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
+    if (flash) showTemporaryReaderAnchorFocus(editorNode, null, true);
     return { ok: true, reason: null };
   }
 
@@ -823,7 +838,7 @@
       if (!Number.isSafeInteger(pageIndex) || pageIndex < 0 || pageIndex !== target.pageIndex) {
         result.reason = "page-identity-unresolved";
       } else if (target.kind === "annotation") {
-        result = await navigateToAnnotationUuid(target.id, pageIndex, isCurrent);
+        result = await navigateToAnnotationUuid(target.id, pageIndex, isCurrent, true);
       } else {
         const pdfViewer = state.app?.pdfViewer;
         const targetPageNumber = pageIndex + 1;
@@ -979,6 +994,100 @@
     return sent;
   }
 
+  function linkedAnnotationMetadata(target) {
+    const value = target?.editorPayload?.readerLink || target?.editor?.readerLink || target?.value?.readerLink;
+    return value?.version === 1 && typeof value.anchorId === "string" &&
+      typeof value.pdfTarget === "string" ? value : null;
+  }
+
+  function isProtectedLinkedEditor(editor) {
+    if (state.hydratingExternalAnnotations || state.disposed) return false;
+    const uuid = state.annotationUuidByRuntimeId.get(String(editor?.id));
+    return !!linkedAnnotationMetadata(collectKnownAnnotationDeletionTargets(editor?.pageIndex).get(uuid));
+  }
+
+  function linkedHighlightPayload(range, pageIndex, anchor, pdfPath) {
+    const view = state.app?.pdfViewer?.getPageView(pageIndex);
+    const layer = textLayerForPage(pageElementForIndex(pageIndex));
+    const bounds = layer?.getBoundingClientRect();
+    if (!view?.viewport || !bounds?.width || !bounds.height) return null;
+    const quadPoints = [];
+    for (const rect of range.getClientRects()) {
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      const points = [[rect.left, rect.top], [rect.right, rect.top], [rect.left, rect.bottom], [rect.right, rect.bottom]]
+        .map(([x, y]) => view.viewport.convertToPdfPoint(
+          (x - bounds.left) * view.viewport.width / bounds.width,
+          (y - bounds.top) * view.viewport.height / bounds.height));
+      const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
+      const left = Math.min(...xs), right = Math.max(...xs), bottom = Math.min(...ys), top = Math.max(...ys);
+      quadPoints.push(left, top, right, top, left, bottom, right, bottom);
+    }
+    if (!quadPoints.length) return null;
+    const xs = quadPoints.filter((_, i) => i % 2 === 0), ys = quadPoints.filter((_, i) => i % 2 === 1);
+    const hex = annotationToolColors?.get(9) || "#fff066";
+    const color = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+    return { annotationType: 9, pageIndex, rotation: 0, color, opacity: 1,
+      rect: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], quadPoints,
+      text: anchor.exactQuote, readerLink: { version: 1, anchorId: anchor.anchorId,
+        pdfTarget: `${pdfPath}#page=${pageIndex + 1}&obreader=sel.${encodeURIComponent(anchor.anchorId)}` } };
+  }
+
+  async function reconcileLinkedHighlights(message, rangeTargets, isCurrent) {
+    // Missing/partial cache data cannot authorize deletion of a saved highlight.
+    if (state.readOnly || !state.externalSourceConfirmed || state.syncApplyControl || isInputBusy() ||
+        !Array.isArray(message.referencedSelectionIds) || typeof message.pdfPath !== "string") return;
+    const referenced = new Set(message.referencedSelectionIds);
+    const known = collectKnownAnnotationDeletionTargets(message.pageIndex);
+    const documentId = state.activeDocumentId, openRequest = state.activeOpenRequest, app = state.app;
+    const sameSession = () => !state.disposed && state.app === app && state.activeDocumentId === documentId &&
+      state.activeOpenRequest === openRequest;
+    let changed = false;
+    try {
+    for (const target of rangeTargets) {
+      if (!isCurrent() || state.readOnly) return;
+      const marker = message.markers.find(m => m.kind === 'selection' && m.id === target.id);
+      const uuid = `reader-link:${target.id}`;
+      const existing = known.get(uuid);
+      if (existing && !linkedAnnotationMetadata(existing)) continue;
+      const colorHex = annotationToolColors?.get(9) || '#fff066';
+      const payload = existing ? { ...existing.editorPayload,
+        color: [1, 3, 5].map(i => parseInt(colorHex.slice(i, i + 2), 16)),
+        readerLink: { ...existing.editorPayload.readerLink,
+          pdfTarget: `${message.pdfPath}#page=${message.pageIndex + 1}&obreader=sel.${encodeURIComponent(target.id)}` } }
+        : linkedHighlightPayload(target.range, message.pageIndex, marker.anchor, message.pdfPath);
+      if (!payload || existing && sameAnnotationPayload(existing.editorPayload, payload)) continue;
+      const row = { uuid, pageIndex: message.pageIndex, kind: 'Highlight', source: 'sidecar', editorPayload: payload };
+      const stamp = makeSyncStamp();
+      const hydrated = await hydrateExternalAnnotation({ uuid, pageIndex: row.pageIndex, kind: row.kind,
+        deleted: false, embeddedRef: null, editor: payload,
+        clock: { timestamp: stamp.timestamp, logical: stamp.logical, deviceId: stamp.deviceId, opId: stamp.operationId } },
+        { replace: !!existing });
+      if (!sameSession()) return;
+      if (hydrated) { applySidecarBulkDelete([row], false); changed = true; }
+    }
+    if (!isCurrent() || state.readOnly) return;
+    const allKnown = [...collectKnownAnnotationDeletionTargets().values()];
+    const rerouted = allKnown.filter(row => {
+      const link = linkedAnnotationMetadata(row);
+      return link && referenced.has(link.anchorId) && link.pdfTarget !==
+        `${message.pdfPath}#page=${row.pageIndex + 1}&obreader=sel.${encodeURIComponent(link.anchorId)}`;
+    }).map(row => ({ ...row, editorPayload: { ...row.editorPayload, readerLink: {
+      ...row.editorPayload.readerLink,
+      pdfTarget: `${message.pdfPath}#page=${row.pageIndex + 1}&obreader=sel.${encodeURIComponent(row.editorPayload.readerLink.anchorId)}`,
+    } } }));
+    if (rerouted.length) { applySidecarBulkDelete(rerouted, false); changed = true; }
+    const removed = allKnown.filter(row => {
+      const link = linkedAnnotationMetadata(row);
+      return link && !referenced.has(link.anchorId);
+    });
+    if (removed.length) { applySidecarBulkDelete(removed, true); changed = true; }
+    } finally {
+      // A newer same-session query can supersede presentation while deserialize
+      // yields. Already applied operations still need their ordinary durable ACK.
+      if (changed && sameSession()) { noteMutation(); await requestSave('manual'); }
+    }
+  }
+
   async function applyReaderBacklinkPageResults(message, attempt = 0) {
     const startedAt = performanceNow();
     const actual = state.actualSourceIdentity;
@@ -1019,7 +1128,8 @@
     const markers = message.markers.slice(0, 256);
     pageRoot.querySelectorAll?.(".pdfReaderAnnotationBacklinkBadge").forEach((node) => node.remove());
     const selectionMarkers = markers.filter((marker) => marker?.kind === "selection" &&
-      typeof marker.id === "string" && marker.anchor);
+      typeof marker.id === "string" && marker.anchor && marker.anchor.sourceHash === actual.sourceHash &&
+      marker.anchor.pageIdentity === message.pageIdentity);
     const rangeEntries = textLayer
       ? (state.textSelectionController?.rangeEntriesForAnchors?.(
         textLayer,
@@ -1031,16 +1141,17 @@
       id: selectionMarkers[entry.index]?.id,
       range: entry.range,
     })).filter((target) => typeof target.id === "string" && target.range);
-    const ranges = rangeTargets.map((target) => target.range);
-    const HighlightCtor = window.Highlight || globalThis.Highlight;
-    let paintedRanges = 0;
-    if (ranges.length && typeof HighlightCtor === "function" && window.CSS?.highlights?.set) {
-      try {
-        window.CSS.highlights.set(READER_BACKLINK_HIGHLIGHT_NAME, new HighlightCtor(...ranges));
-        state.readerBacklinkHighlights = ranges;
-        paintedRanges = ranges.length;
-      } catch { /* The page badge remains a safe visual fallback. */ }
+    const reconciliation = (state.readerLinkedHighlightTask || Promise.resolve()).catch(() => {}).then(() => {
+      if (isCurrent()) return reconcileLinkedHighlights(message, rangeTargets, isCurrent);
+    });
+    state.readerLinkedHighlightTask = reconciliation;
+    try { await reconciliation; } catch (error) {
+      sendError(error.message || '关联高亮保存失败', { code: 'reader-linked-highlight-failed' });
+      return false;
     }
+    if (!isCurrent()) return false;
+    state.readerBacklinkHighlights = rangeTargets.map(target => target.range);
+    const paintedRanges = rangeTargets.length;
     const pageRect = rangeTargets.length ? pageRoot.getBoundingClientRect() : null;
     for (const target of rangeTargets) {
       const rect = target.range.getBoundingClientRect();
@@ -3033,6 +3144,10 @@
     if (!manager) return false;
     if (!(await prepareEmbeddedDeletionTargets(session, pageIndex))) return false;
     const plan = collectManagedAnnotationDeletionPlan(pageIndex, selectedUuids);
+    if ([...plan.targets.values()].some(linkedAnnotationMetadata)) {
+      showStatus("请删除笔记中的对应链接");
+      return false;
+    }
     if (selectedUuids && (plan.targets.size !== selectedUuids.size || [...selectedUuids].some((uuid) => !plan.targets.has(uuid)))) {
       showStatus("批注状态已变化，请重新选择后删除。");
       return false;
@@ -4203,6 +4318,9 @@
         const selectionGroup = state.annotationSelectionGroups?.get(runtimeId) || value.selectionGroup ||
           exactRow?.editor?.selectionGroup || exactRow?.editorPayload?.selectionGroup || priorRow?.value?.selectionGroup;
         if (selectionGroup) value = { ...value, selectionGroup };
+        const readerLink = exactRow?.editor?.readerLink || exactRow?.editorPayload?.readerLink ||
+          priorRow?.value?.readerLink || value.readerLink;
+        if (readerLink) value = { ...value, readerLink };
         const targetText = state.annotationTargetTextByRuntimeId?.get(runtimeId) ||
           value?.text ||
           exactRow?.editor?.text || exactRow?.editorPayload?.text || priorRow?.value?.text;
@@ -5294,6 +5412,10 @@
       // it is no longer empty.
       app.pdfViewer?.getPageView?.(row.pageIndex)?.annotationEditorLayer?.show?.();
       const runtimeId = String(editor.id);
+      if (row.editor?.readerLink?.version === 1 && editor.div) {
+        editor.div.dataset.readerLinkedAnchor = row.editor.readerLink.anchorId;
+        editor.div.tabIndex = -1;
+      }
       state.annotationUuidByRuntimeId.set(runtimeId, row.uuid);
       if (row.embeddedRef) {
         state.annotationRefByRuntimeId.set(runtimeId, row.embeddedRef);
@@ -8334,6 +8456,17 @@
       return;
     }
     const cleanups = [];
+    for (const name of ['delete', 'deleteEditor']) {
+      wrapMethod(manager, name, (original, args) => {
+        const protectedEditor = name === 'deleteEditor' ? isProtectedLinkedEditor(args[0]) :
+          [...state.annotationUuidByRuntimeId.keys()].some(id => {
+            const editor = manager.getEditor?.(id);
+            return editor && manager.isSelected?.(editor) && isProtectedLinkedEditor(editor);
+          });
+        if (protectedEditor) { showStatus('请删除笔记中的对应链接'); return; }
+        return original.apply(manager, args);
+      }, cleanups);
+    }
 
     // A NONE-mode click selects a saved Square and activates its tool. Without
     // the native editId flag, creation-priority CSS then makes that very object
@@ -8416,6 +8549,16 @@
     // later from a deleted placeholder or guess its geometry.
     wrapMethod(manager, "addEditor", (original, [editor]) => {
       const result = original.call(manager, editor);
+      if (editor && !editor.__readerLinkGuardInstalled) {
+        editor.__readerLinkGuardInstalled = true;
+        wrapMethod(editor, "remove", (remove, args) => {
+          if (isProtectedLinkedEditor(editor)) {
+            showStatus("请删除笔记中的对应链接");
+            return;
+          }
+          return remove.apply(editor, args);
+        }, cleanups);
+      }
       runAnnotationObserver("editor.identity", () => rememberAnnotationEditorIdentity(editor));
       const pendingSelection = state.pendingHighlightSelection;
       const runtimeId = String(editor?.id ?? "");
@@ -11760,6 +11903,7 @@
           message.openRequest === state.activeOpenRequest) {
         annotationToolColors?.applySnapshot(message.colors);
         document.documentElement.style.setProperty("--pdf-reader-highlight-color", annotationToolColors?.get(9) || "#fff066");
+        if (state.readerBacklinkPageResults) void applyReaderBacklinkPageResults(state.readerBacklinkPageResults);
       }
       return;
     }

@@ -2025,6 +2025,28 @@ test("Reader backlink page lookup cannot publish a superseded same-page result",
   harness.plugin.onunload();
 });
 
+test("backlink clicks reuse the already open Markdown leaf for the same file", async () => {
+  const harness=createHarness();await harness.plugin.onload();
+  const file=new harness.TFile('Notes/Existing.md');harness.files.set(file.path,file);
+  const leaf={view:{file,getViewType:()=>"markdown"}};
+  harness.plugin.resolveReaderBacklinkSourceEvidence=async()=>({kind:'file'});
+  const opens=[],reveals=[];
+  harness.app.workspace.getLeavesOfType=type=>type==='markdown'?[leaf]:[];
+  harness.app.workspace.openLinkText=async(...args)=>{opens.push(args);harness.app.workspace.activeLeaf=leaf};
+  harness.app.workspace.revealLeaf=async actual=>{reveals.push(actual);harness.app.workspace.activeLeaf=actual};
+  try {
+    await harness.plugin.openReaderBacklinkSource({sourcePath:file.path});
+    await harness.plugin.openReaderBacklinkSource({sourcePath:file.path});
+    assert.equal(opens.length,0,'same-file backlinks must not open another tab');
+    assert.deepEqual(reveals,[leaf,leaf]);
+    leaf.getViewState=()=>({type:'markdown',state:{file:file.path}});
+    leaf.view.file=null;
+    await harness.plugin.openReaderBacklinkSource({sourcePath:file.path});
+    assert.equal(opens.length,0,'a deferred Markdown leaf is also reused by its saved file path');
+    assert.equal(reveals.length,3);
+  } finally {harness.plugin.onunload()}
+});
+
 test("Reader backlink source navigation focuses the exact Markdown link and never overwrites user movement", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
@@ -5399,6 +5421,71 @@ test("a PDF folder rename updates the existing identity route for open and close
     assert.deepEqual(file.bytes, beforeBytes);
     assert.equal(file.writes, 0);
   } finally { harness.plugin.onunload(); }
+});
+
+for (const order of ['pdf-first', 'markdown-first']) test(`strict two-end rename/move keeps exact backlink targets (${order})`, async () => {
+  const harness=createHarness();
+  const fallback=[];
+  harness.app.workspace.openLinkText=async(...args)=>fallback.push(args);
+  await harness.plugin.onload();
+  try {
+    const pdf=new harness.TFile('Books/原书.pdf',[37,80,68,70,4]);
+    const {view}=await createSidecarReader(harness,pdf,{pageCount:1,orderedPageIdentities:['rename-page']});
+    const document=view.annotationDocument, beforeBytes=Uint8Array.from(pdf.bytes);
+    const anchor=await harness.plugin.readerAnchorStore.create({anchorId:`strict-${order}-anchor`,docKey:document.docKey,
+      documentId:document.documentId,sourceHash:view.annotationSourceHash,pageIdentity:'rename-page',pageIndexHint:0,pageCount:1,
+      orderedPageIdentityDigest:await harness.plugin.pdfHashRuntime.fingerprint(new TextEncoder().encode(JSON.stringify(['rename-page']))),
+      textPosition:{start:4,end:10},exactQuote:'原文准确目标',prefix:'前',suffix:'后',createdAt:1792200000000});
+    const destination=`${pdf.path}#page=1&obreader=sel.${anchor.anchorId}`;
+    const original=`[[${destination}|原文]]`, content=`前言\n${original}\n结束`;
+    const note=new harness.TFile('Notes/原笔记.md');harness.files.set(note.path,note);
+    const cache={links:[{link:destination,original,displayText:'原文',position:{start:{offset:3,line:1},end:{offset:3+original.length,line:1}}}]};
+    harness.setFileCache(note,cache);harness.emitMetadataCache('changed',note);
+    await harness.plugin.resolveCompactReaderBacklinkTargets([anchor.anchorId],{notify:false});
+    const editor={getValue:()=>content,offsetToPos:offset=>({line:1,ch:offset-3}),lineCount:()=>3,
+      setSelection(a,b){this.from=a;this.to=b},scrollIntoView(range,center){this.scroll={range,center}},focus(){this.focused=true}};
+    const leaf={view:{file:note,editor,getViewType:()=> 'markdown'}};
+    harness.app.workspace.getLeavesOfType=type=>type==='markdown'?[leaf]:[];
+    harness.app.workspace.revealLeaf=async()=>{harness.app.workspace.activeLeaf=leaf};
+    const realOpenPdf=harness.plugin.openPdf.bind(harness.plugin), opened=[];
+    harness.plugin.openPdf=async(file,target)=>opened.push({file,target});
+    harness.app.vault.getMarkdownFiles=()=>{throw Error('interaction attempted a full Vault scan')};
+    const renameNote=async path=>{
+      const old=note.path;harness.files.delete(old);harness.metadataCaches.delete(old);
+      note.path=path;harness.files.set(path,note);
+      // The rename event arrives BEFORE MetadataCache is ready.
+      harness.emitVault('rename',note,old);
+      assert.equal(harness.plugin.readerBacklinkIndex.getSourcePathsUnder(old).length,0);
+      let rows=harness.plugin.readerBacklinkIndex.getDocument(document.docKey,document.documentId);
+      assert.equal(rows.length,1);assert.equal(rows[0].sourcePath,path);
+      assert.equal(rows[0].offset,3);assert.equal(rows[0].endOffset,3+original.length);
+      harness.setFileCache(note,cache);harness.emitMetadataCache('changed',note);
+      await harness.plugin.resolveCompactReaderBacklinkTargets([anchor.anchorId],{notify:false});
+    };
+    const renamePdf=async path=>{
+      const old=pdf.path;harness.files.delete(old);pdf.path=path;harness.files.set(path,pdf);
+      harness.emitVault('rename',pdf,old);
+      for(let i=0;i<25;i++){
+        const route=await harness.plugin.annotationHost.store.documentForIdentity(document);
+        if(route?.sourcePath===path)break;
+        await new Promise(resolve=>setTimeout(resolve,0));
+      }
+      assert.equal((await harness.plugin.annotationHost.store.documentForIdentity(document)).sourcePath,path);
+    };
+    if(order==='pdf-first'){await renamePdf('Archive/中文 新书.pdf');await renameNote('Archive/新笔记.md')}
+    else{await renameNote('Archive/新笔记.md');await renamePdf('Archive/中文 新书.pdf')}
+    await renameNote('Notes/Again/最终笔记.md');await renamePdf('Books/Again/最终书.pdf');
+    await harness.app.workspace.openLinkText(destination,note.path,false);
+    assert.equal(opened.at(-1)?.file,pdf);assert.equal(opened.at(-1)?.target.id,anchor.anchorId);
+    assert.equal(opened.at(-1)?.target.documentId,document.documentId);assert.equal(fallback.length,0);
+    const rows=harness.plugin.readerBacklinkIndex.getDocument(document.docKey,document.documentId);
+    assert.equal(rows.length,1);assert.equal(rows[0].sourcePath,note.path);
+    assert.equal(await harness.plugin.openReaderBacklinkSource(rows[0],{requireExact:true}),true);
+    assert.deepEqual(editor.from,{line:1,ch:0});assert.deepEqual(editor.to,{line:1,ch:original.length});
+    assert.equal(editor.focused,true);assert.equal(editor.scroll.center,true);
+    assert.deepEqual(pdf.bytes,beforeBytes);assert.equal(pdf.writes,0);
+    harness.plugin.openPdf=realOpenPdf;
+  }finally{harness.plugin.onunload()}
 });
 
 test("Sidebar and Backlink facades delegate to the current effective Reader without a second store", async () => {

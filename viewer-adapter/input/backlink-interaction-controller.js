@@ -290,7 +290,7 @@
     handlePointerDown(event) {
       this.cancelPendingClick();
       const badge = event?.target?.closest?.(
-        ".pdfReaderAnnotationBacklinkBadge, .pdfReaderBacklinkPageBadge",
+        ".pdfReaderAnnotationBacklinkBadge, .pdfReaderBacklinkPageBadge, [data-reader-linked-anchor]",
       );
       if (badge) {
         // Do not let the badge's pointerdown start an editor drag. Avoid
@@ -302,7 +302,7 @@
 
     handleBadgeFocus(event) {
       const badge = event?.target?.closest?.(
-        ".pdfReaderAnnotationBacklinkBadge, .pdfReaderBacklinkPageBadge",
+        ".pdfReaderAnnotationBacklinkBadge, .pdfReaderBacklinkPageBadge, [data-reader-linked-anchor]",
       );
       if (!badge || !this.targetFromEvent(event)) return false;
       // A badge is UI, not the containing PDF.js editor. Preserve native focus

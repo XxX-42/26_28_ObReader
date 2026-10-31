@@ -4817,7 +4817,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
             this.handleVocabularyDictionaryResourceChange(file?.path, oldPath);
           }
           if (typeof oldPath === "string" && oldPath.toLowerCase().endsWith(".md")) {
-            this.removeReaderBacklinkFile(oldPath, { notify: false });
+            if (this.readerBacklinkIndex?.renameFile?.(oldPath, file.path)) this.invalidateReaderBacklinkPageIndexes();
           }
           if (typeof file?.path === "string" && file.path.toLowerCase().endsWith(".md")) {
             this.refreshReaderBacklinkFile(file);
@@ -4827,7 +4827,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
             const sourcePaths = this.readerBacklinkIndex?.getSourcePathsUnder?.(oldFolderPath) || [];
             let changed = false;
             for (const oldSourcePath of sourcePaths) {
-              this.removeReaderBacklinkFile(oldSourcePath, { notify: false });
+              this.readerBacklinkIndex?.renameFile?.(oldSourcePath, `${newFolderPath}${oldSourcePath.slice(oldFolderPath.length)}`);
+              this.invalidateReaderBacklinkPageIndexes();
               changed = true;
               const movedPath = `${newFolderPath}${oldSourcePath.slice(oldFolderPath.length)}`;
               const movedFile = this.app.vault.getAbstractFileByPath?.(movedPath);
@@ -4946,7 +4947,9 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
   refreshReaderBacklinkFile(file, { notify = true } = {}) {
     if (!file || typeof file.path !== "string" || !file.path.toLowerCase().endsWith(".md")) return false;
     const cache = this.app.metadataCache?.getFileCache?.(file);
-    if (!cache) return this.removeReaderBacklinkFile(file.path, { notify });
+    // No cache yet is not a confirmed deletion. The actual vault delete event
+    // removes rows; a later metadata changed event replaces them atomically.
+    if (!cache) return false;
     const updated = this.readerBacklinkIndex?.replaceFile(file, cache) || false;
     if (updated) this.invalidateReaderBacklinkPageIndexes();
     if (updated && this.readerBacklinkIndexReady) {
@@ -5133,6 +5136,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return {
       rows: page.rows,
       markers: page.markers,
+      referencedSelectionIds: cached.value.referencedSelectionIds,
       backlinkLookupMs: cached.cacheHit ? 0 : cached.stats?.backlinkLookupMs || 0,
       anchorResolveMs: cached.cacheHit ? 0 : cached.stats?.anchorResolveMs || 0,
       pageIndexCacheHit: cached.cacheHit,
@@ -5168,6 +5172,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       pageIndex: message.pageIndex, pageIdentity: message.pageIdentity,
       ...(requestId ? { requestId } : {}),
       backlinkCount: result.rows.length, markers: result.markers.slice(0, 64),
+      referencedSelectionIds: result.referencedSelectionIds,
+      pdfPath: view.file?.path || view.requestedPath,
       backlinkLookupMs: result.backlinkLookupMs, anchorResolveMs: result.anchorResolveMs,
       pageIndexCacheHit: result.pageIndexCacheHit });
     return true;
@@ -5317,7 +5323,10 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       return false;
     };
     try {
-      await workspace.openLinkText(sourcePath, "", true);
+      const existing = workspace.getLeavesOfType?.("markdown")?.find(candidate =>
+        (candidate.view?.file?.path || candidate.getViewState?.().state?.file) === sourcePath);
+      if (existing && typeof workspace.revealLeaf === "function") await workspace.revealLeaf(existing);
+      else await workspace.openLinkText(sourcePath, "", true);
     } catch (error) {
       this.sessionLog?.record("readerBacklinks", { event: "source-open-failed", source,
         code: error?.code || "unknown" });

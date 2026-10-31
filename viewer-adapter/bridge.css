@@ -141,33 +141,39 @@ body {
   pointer-events: auto;
 }
 
-/* References use the ordinary yellow highlighter appearance. This remains a
+/* References use the preferred highlighter color. This remains a
    read-only consumer of the backlink index, not an additional editor tool. */
 ::highlight(pdfReaderMarkdownBacklinks) {
-  background-color: rgb(255 235 59 / 45%);
-  color: inherit;
+  background-color: transparent;
+}
+
+/* Reference-owned editors use the native draw layer, but their body is not
+   editable. Let the existing text hit-test and chain badge own navigation. */
+#viewerContainer [data-reader-linked-anchor],
+#viewerContainer [data-reader-linked-anchor] * {
+  pointer-events: none !important;
 }
 
 /* A short-lived navigation focus is separate from the document selection and
    from persistent LingQ/annotation paint. Page anchors get a page outline;
    text anchors use the CSS Highlight API over their exact Range. */
 ::highlight(pdfReaderAnchorFocusText) {
-  background-color: rgb(255 190 35 / 48%);
+  background-color: transparent;
+  text-decoration: underline var(--pdf-reader-highlight-color, #fff066) 2px;
   color: inherit;
-  text-decoration: underline 2px rgb(215 135 0 / 90%);
 }
 
 #viewerContainer .page.pdfReaderAnchorFocusPage {
-  animation: pdfReaderAnchorPageFocus 1.8s ease-out both;
+  animation: pdfReaderAnchorPageFocus 0.5s steps(1, end) 6;
 }
 
 @keyframes pdfReaderAnchorPageFocus {
-  0%, 12% {
-    outline: 3px solid var(--interactive-accent, #6957d5);
+  0%, 49% {
+    outline: 3px solid var(--pdf-reader-highlight-color, #fff066);
     outline-offset: -4px;
-    box-shadow: inset 0 0 0 9999px rgb(255 190 35 / 12%);
+    box-shadow: inset 0 0 0 9999px color-mix(in srgb, var(--pdf-reader-highlight-color, #fff066) 12%, transparent);
   }
-  100% {
+  50%, 100% {
     outline-color: transparent;
     box-shadow: inset 0 0 0 9999px transparent;
   }
@@ -177,15 +183,19 @@ body {
   position: absolute;
   z-index: 50;
   border-radius: 2px;
-  background: rgb(255 190 35 / 48%);
-  box-shadow: inset 0 -2px rgb(215 135 0 / 90%);
+    background: transparent;
+    outline: 2px solid var(--pdf-reader-highlight-color, #fff066);
   pointer-events: none;
-  animation: pdfReaderAnchorTextFocus 1.8s ease-out both;
+  animation: pdfReaderAnchorTextFocus 0.5s steps(1, end) 6;
 }
 
 @keyframes pdfReaderAnchorTextFocus {
-  0%, 12% { opacity: 1; }
-  100% { opacity: 0; }
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+#viewerContainer .pdfReaderAnchorFocusAnnotation {
+  animation: pdfReaderAnchorTextFocus 0.5s steps(1, end) 6;
 }
 
 .pdfReaderBacklinkPageBadge {
