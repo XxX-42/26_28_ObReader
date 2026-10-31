@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { nativeEvalJson, nativeCdp, nativeConfig, assertNativeVaultIdentity } from './native-config.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const fixturePath=process.env.OBREADER_REGION_FIXTURE || path.join(root,'tests/fixtures/tracemonkey.pdf');
 const run=`rectangle-${Date.now()}`, directory=`Native Region Tests/${run}`;
 const output=path.join(root,'tests/artifacts/rectangle-region',run);await mkdir(output,{recursive:true});
 const evaluate=(code)=>nativeEvalJson(`(async()=>{${code}})().then(value=>JSON.stringify(value))`,60000);
@@ -14,7 +15,7 @@ const report={run,directory};let installed=false;
 try {
   const identity=await evaluate(`return {vault:app.vault.adapter.basePath,configDir:app.vault.configDir,readers:app.workspace.getLeavesOfType('pdf-web-reader-view').length}`);
   assertNativeVaultIdentity(identity);assert.equal(identity.readers,0);
-  const bytes=await readFile(path.join(root,'tests/fixtures/tracemonkey.pdf'));
+  const bytes=await readFile(fixturePath);
   report.initialSha=createHash('sha256').update(bytes).digest('hex');
   const source=path.join(root,'plugin/pdf-annotation-host.cjs');
   const setup=await evaluate(`
@@ -42,7 +43,7 @@ try {
     p.annotationHost=r.host;
     let folder='';for(const segment of r.directory.split('/')){folder=folder?folder+'/'+segment:segment;if(!await real.exists(folder))await real.mkdir(folder);}
     await real.mkdir(r.directory+'/Books');await real.mkdir(r.directory+'/Notes');r.pdfPath=r.directory+'/Books/区域 测试.pdf';
-    await app.vault.createBinary(r.pdfPath,new Uint8Array(require('fs').readFileSync(${JSON.stringify(path.join(root,'tests/fixtures/tracemonkey.pdf'))})).buffer);
+    await app.vault.createBinary(r.pdfPath,new Uint8Array(require('fs').readFileSync(${JSON.stringify(fixturePath)})).buffer);
     r.originalCopy=p.copyReaderText;p.copyReaderText=async text=>{r.links.push(text);await r.originalCopy.call(p,text);};
     r.originalOpen=p.openPdf;r.openTargets=[];p.openPdf=async function(file,target,...args){if(target)r.openTargets.push({path:file.path,target});return r.originalOpen.call(p,file,target,...args);};
     r.originalModify=app.vault.modifyBinary;app.vault.modifyBinary=async function(file,...args){if(file.path.startsWith(r.directory+'/'))r.sourceWrites++;return r.originalModify.call(app.vault,file,...args);};
@@ -51,6 +52,8 @@ try {
   installed=true;report.setup=setup;
   await nativeCdp('Page.bringToFront');
   await wait(`const r=app.__regionNative;const p=app.plugins.plugins['pdf-web-reader'];r.view=[...p.views].find(v=>v.documentFile?.path===r.pdfPath);const w=r.view?.iframe?.contentWindow;return !!(r.view?.annotationHydrationAllowed&&w?.PDFViewerApplication?.pdfViewer?.getPageView(0)?.renderingState===3);`,'first page verified');
+  await evaluate(`const r=app.__regionNative,w=r.view.iframe.contentWindow;w.PDFViewerApplication.pdfViewer.currentPageNumber=1;
+    w.document.querySelector('.page[data-page-number="1"]').scrollIntoView({block:'start'});await new Promise(resolve=>w.requestAnimationFrame(resolve));return true;`);
   report.before=await evaluate(`const r=app.__regionNative,w=r.view.iframe.contentWindow;const original=w.PDFViewerApplication.pdfDocument.saveDocument.bind(w.PDFViewerApplication.pdfDocument);w.PDFViewerApplication.pdfDocument.saveDocument=(...args)=>{r.saveCalls++;return original(...args)};return {readOnly:r.view.annotationHydrationAllowed,page:w.PDFViewerApplication.pdfViewer.currentPageNumber};`);
   const rect=await evaluate(`const r=app.__regionNative,f=r.view.iframe.getBoundingClientRect(),w=r.view.iframe.contentWindow;
     const button=w.document.getElementById('pdfReaderRectangleRegionButton');if(!button||button.disabled)throw Error('Rectangle button unavailable');button.click();
@@ -59,6 +62,7 @@ try {
   report.dragTarget=await evaluate(`const r=app.__regionNative, f=r.view.iframe.getBoundingClientRect(), w=r.view.iframe.contentWindow;
     const hit=document.elementFromPoint(${rect.x},${rect.y}),inner=w.document.elementFromPoint(${rect.x}-f.x,${rect.y}-f.y);
     return {point:${JSON.stringify(rect)},outerHit:hit?.tagName,iframeHit:hit===r.view.iframe,innerHit:inner?.className,visibility:document.visibilityState,focus:document.hasFocus()};`);
+  assert.equal(report.dragTarget.iframeHit,true,'drag start must hit the active Reader iframe');
   await evaluate(`const r=app.__regionNative,w=r.view.iframe.contentWindow;r.inputEvents=[];r.inputProbe=e=>r.inputEvents.push({type:e.type,x:e.clientX,y:e.clientY,buttons:e.buttons,trusted:e.isTrusted});
     for(const name of ['pointerdown','pointermove','pointerup'])w.document.addEventListener(name,r.inputProbe,true);return true;`);
   await wait(`return app.__regionNative.view.iframe.contentWindow.PDFViewerApplication.pdfViewer.annotationEditorMode===5;`,'Square tool');
