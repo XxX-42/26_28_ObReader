@@ -222,6 +222,14 @@ function makeHarness({ appMobile = true, platformMobile = false, platformIos = f
     constructor(containerEl) { this.containerEl = containerEl; settings.push(this); }
     setName(value) { this.name = value; return this; }
     setDesc(value) { this.description = value; return this; }
+    addDropdown(callback) {
+      const input={addOptions(){return this},setValue(){return this},onChange(){return this}};
+      callback(input);return this;
+    }
+    addTextArea(callback) {
+      const input={inputEl:{style:{}},setValue(){return this},onChange(){return this}};
+      callback(input);return this;
+    }
     addToggle(callback) {
       const toggle = {
         value: undefined,
@@ -369,7 +377,7 @@ function makeHarness({ appMobile = true, platformMobile = false, platformIos = f
       }
       if (["./pdf-merge-client.cjs", "./pdf-sync-host.cjs", "./heavy-work.cjs", "./pdf-recovery.cjs",
         "./pdf-recovery-read.cjs", "./pdf-annotation-host.cjs", "./reader-anchor-store.cjs", "./vocabulary/canonical.cjs",
-        "./reader-backlink-index.cjs", "./vocabulary/service.cjs", "./vocabulary/dictionary.cjs",
+        "./reader-backlink-index.cjs", "./selection-copy-format.cjs", "./vocabulary/service.cjs", "./vocabulary/dictionary.cjs",
         "./vocabulary/modals.cjs", "./vocabulary/workspace.cjs", "./vocabulary/workbench.cjs",
         "./learning/host.cjs", "./semantic/services.cjs", "./session-log.cjs"].includes(name)) return sourceRequire(name);
       if (name.startsWith("node:")) nodeRuntimeRequires.push(name);

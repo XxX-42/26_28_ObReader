@@ -38,6 +38,12 @@ class FakeSetting {
   }
   setName(value) { this.name = value; return this; }
   setDesc(value) { this.description = value; return this; }
+  addDropdown(callback) {
+    callback({addOptions(){return this},setValue(){return this},onChange(){return this}});return this;
+  }
+  addTextArea(callback) {
+    callback({inputEl:{style:{}},setValue(){return this},onChange(){return this}});return this;
+  }
   addToggle(callback) {
     const toggle = {
       value: undefined, handler: null,

@@ -630,7 +630,9 @@
       const actual=state.actualSourceIdentity;
       const captures=state.textSelectionController.captureSelectedPages().map(({pageRoot,anchor})=>{
         const pageNumber=readerPageNumberForRoot(pageRoot),pageIndex=pageNumber-1;
-        return {kind:'selection',pageNumber,pageIndex,pageIdentity:actual?.orderedPageIdentities?.[pageIndex],sourceHash:actual?.sourceHash,...anchor};
+        return {kind:'selection',pageNumber,pageIndex,pageIdentity:actual?.orderedPageIdentities?.[pageIndex],sourceHash:actual?.sourceHash,
+          pageLabel: state.app?.pdfViewer?.getPageView?.(pageIndex)?.pageLabel || String(pageNumber),
+          color: annotationToolColors?.get(9) || '', ...anchor};
       });
       if (!captures.length || captures.some(c=>!c.pageIdentity)) return;
       const signature=JSON.stringify(captures.map(c=>[c.pageIndex,c.textPosition,c.exactQuote]));

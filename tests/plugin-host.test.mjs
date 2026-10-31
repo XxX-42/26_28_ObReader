@@ -336,6 +336,17 @@ function createHarness({
     }
     setName(value) { this.name = value; return this; }
     setDesc(value) { this.description = value; return this; }
+    addDropdown(callback) {
+      const input = { addOptions(value) { this.options=value; return this; },
+        setValue(value) { this.value=value; return this; }, onChange(fn) { this.handler=fn; return this; },
+        change(value) { return this.handler(value); } };
+      callback(input); this.dropdown=input; return this;
+    }
+    addTextArea(callback) {
+      const input = { inputEl: {style:{}}, setValue(value) { this.value=value; return this; },
+        onChange(fn) { this.handler=fn; return this; }, change(value) { return this.handler(value); } };
+      callback(input); this.textarea=input; return this;
+    }
     addToggle(callback) {
       const toggle = {
         value: undefined,
@@ -2309,6 +2320,25 @@ test("LingQ occurrence backlink query never starts a cold full-Vault index scan"
   harness.plugin.onunload();
 });
 
+test("auto-copy formats real validated anchors using the selected template", async () => {
+  const harness=createHarness({storageProtocol:"v15"});await harness.plugin.onload();
+  try {
+    const file=new harness.TFile("Books/template.pdf",Uint8Array.from([37,80,68,70,9,8,7]));
+    const {view}=await createSidecarReader(harness,file,{pageCount:1,orderedPageIdentities:["page-one"]});
+    harness.plugin.settings.selectionCopyTemplate='{{text}}\n{{linkWithDisplay}}';
+    harness.plugin.settings.selectionDisplayTemplate='p{{pageLabel}}';
+    view.autoCopySelectionSequence=1;
+    let copied='unchanged';harness.plugin.copyReaderText=async text=>{copied=text};
+    const capture={kind:"selection",pageIndex:0,pageNumber:1,pageLabel:"i",pageIdentity:"page-one",
+      sourceHash:view.annotationSourceHash,exactQuote:"selected words",prefix:"",suffix:"",
+      textPosition:{start:0,end:14},geometry:{x:0.1,y:0.2,width:0.4,height:0.03}};
+    await harness.plugin.copySelectionLinks(view,{sequence:1,documentId:view.documentId,openRequest:view.openRequest,
+      rendererGeneration:view.rendererGeneration,captures:[capture]});
+    assert.match(copied,/^selected words\n\[\[Books\/template\.pdf#page=1.*obreader=sel\./);
+    assert.ok(copied.endsWith('|pi]]'));
+  } finally {harness.plugin.onunload()}
+});
+
 test("a selection link before the first annotation keeps its v15 identity after restart", async () => {
   const harness = createHarness({ storageProtocol: "v15" });
   await harness.plugin.onload();
@@ -3347,6 +3377,29 @@ test("renaming a PDF updates the path while retaining the view session ID", asyn
   assert.equal(sent.at(-1).type, "annotation-path-updated");
   assert.equal(sent.at(-1).documentId, annotationDocumentId);
   assert.equal(sent.at(-1).sourcePath, file.path);
+});
+
+test("selection copy templates expose presets, persist edits and reject unsupported expressions", async () => {
+  const harness=createHarness();
+  await harness.plugin.onload();
+  harness.plugin.settingTab.display();
+  const settings=harness.plugin.settingTab.containerEl.settings;
+  const preset=settings.find(row=>row.name==="选区复制预设");
+  const copy=settings.find(row=>row.name==="自定义复制内容");
+  const display=settings.find(row=>row.name==="链接显示文字模板");
+  const preview=settings.find(row=>row.name==="复制预览（示例）");
+  assert.equal(copy.textarea.value,'{{linkWithDisplay}}');
+  await preset.dropdown.change('quote');
+  assert.equal(harness.plugin.persistedData.selectionCopyTemplate,'> {{text}}\n\n{{linkWithDisplay}}');
+  await display.textarea.change('p{{pageLabel}}');
+  assert.match(preview.description,/\|p40\]\]/);
+  await copy.textarea.change('{{app.vault.delete(file)}}');
+  assert.match(preview.description,/不支持/);
+  assert.equal(harness.plugin.settings.selectionCopyTemplate,'> {{text}}\n\n{{linkWithDisplay}}');
+  const restored=createHarness();restored.plugin.persistedData=structuredClone(harness.plugin.persistedData);
+  await restored.plugin.onload();
+  assert.equal(restored.plugin.settings.selectionDisplayTemplate,'p{{pageLabel}}');
+  assert.equal(restored.plugin.settings.selectionCopyTemplate,'> {{text}}\n\n{{linkWithDisplay}}');
 });
 
 test("auto-save preference persists and is sent to open views", async () => {

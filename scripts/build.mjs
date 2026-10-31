@@ -376,6 +376,7 @@ const recoveryMarker = /\/\* BUILD:PDF_RECOVERY_REQUIRE \*\/\s*const\s*\{\s*read
 const sessionLogMarker = /\/\* BUILD:SESSION_LOG_REQUIRE \*\/\s*const\s*\{\s*createSessionLog\s*\}\s*=\s*require\((['"])\.\/session-log\.cjs\1\);/s;
 const readerAnchorStoreMarker = /\/\* BUILD:READER_ANCHOR_STORE_REQUIRE \*\/\s*const\s*\{\s*createReaderAnchorStore\s*,\s*parseReaderLinkFragment\s*,\s*parseReaderLinkDestination\s*,\s*encodeReaderLinkFragment\s*\}\s*=\s*require\((['"])\.\/reader-anchor-store\.cjs\1\);/s;
 const readerBacklinkIndexMarker = /\/\* BUILD:READER_BACKLINK_INDEX_REQUIRE \*\/\s*const\s*\{\s*buildReaderBacklinkPageIndex\s*,\s*createReaderBacklinkIndex\s*,\s*normalizePdfRoutePath\s*\}\s*=\s*require\((['"])\.\/reader-backlink-index\.cjs\1\);/s;
+const selectionCopyFormatMarker = /\/\* BUILD:SELECTION_COPY_FORMAT_REQUIRE \*\/[^\n]+/;
 const sourceMain = await readFile(path.join(pluginSource, "main.js"), "utf8");
 assert.doesNotMatch(sourceMain, /\btraceMethods\s*\(|\b\w+\s*=\s*traceFunction\s*\(|BUILD:HOST_FUNCTION_TRACE/,
   "Production Host methods must not be automatically wrapped for per-call diagnostics");
@@ -528,6 +529,8 @@ assert.equal([...sourceMain.matchAll(new RegExp(readerAnchorStoreMarker.source, 
 const inlinedReaderAnchorStore = await inlineModule("reader-anchor-store.cjs", "__PDFReaderAnchorStore", "createReaderAnchorStore, parseReaderLinkFragment, parseReaderLinkDestination, encodeReaderLinkFragment");
 assert.equal([...sourceMain.matchAll(new RegExp(readerBacklinkIndexMarker.source, "gs"))].length, 1, "Expected one Reader Backlink Index build marker");
 const inlinedReaderBacklinkIndex = await inlineModule("reader-backlink-index.cjs", "__PDFReaderBacklinkIndex", "buildReaderBacklinkPageIndex, createReaderBacklinkIndex, normalizePdfRoutePath");
+assert.equal([...sourceMain.matchAll(new RegExp(selectionCopyFormatMarker.source, "g"))].length, 1);
+const inlinedSelectionCopyFormat = await inlineModule("selection-copy-format.cjs", "__PDFReaderSelectionCopyFormat", "DEFAULT_COPY_TEMPLATE, DEFAULT_DISPLAY_TEMPLATE, COPY_PRESETS, formatSelectionCopy");
 const bundledMain = sourceMain
   .replace(requireMarker, () => inlinedHelper)
   .replace(hashRuntimeMarker, () => inlinedHashRuntime)
@@ -546,6 +549,7 @@ const bundledMain = sourceMain
   .replace(sessionLogMarker, () => inlinedSessionLog)
   .replace(readerAnchorStoreMarker, () => inlinedReaderAnchorStore)
   .replace(readerBacklinkIndexMarker, () => inlinedReaderBacklinkIndex)
+  .replace(selectionCopyFormatMarker, () => inlinedSelectionCopyFormat)
   .replace(
     payloadMarker,
     () => `const VIEWER_ASSET_PAYLOAD = ${JSON.stringify(payload)};`,

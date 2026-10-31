@@ -52,6 +52,7 @@ function drainViewerRuntimeLog(view) {
 /* BUILD:PDF_RECOVERY_REQUIRE */ const { readDeltaRecovery } = require('./pdf-recovery-read.cjs');
 /* BUILD:READER_ANCHOR_STORE_REQUIRE */ const { createReaderAnchorStore, parseReaderLinkFragment, parseReaderLinkDestination, encodeReaderLinkFragment } = require('./reader-anchor-store.cjs');
 /* BUILD:READER_BACKLINK_INDEX_REQUIRE */ const { buildReaderBacklinkPageIndex, createReaderBacklinkIndex, normalizePdfRoutePath } = require('./reader-backlink-index.cjs');
+/* BUILD:SELECTION_COPY_FORMAT_REQUIRE */ const { DEFAULT_COPY_TEMPLATE, DEFAULT_DISPLAY_TEMPLATE, COPY_PRESETS, formatSelectionCopy } = require('./selection-copy-format.cjs');
 /* BUILD:VIEWER_ASSET_PAYLOAD */ const VIEWER_ASSET_PAYLOAD = null;
 
 const VIEW_TYPE = "pdf-web-reader-view";
@@ -1210,6 +1211,75 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
     this.vocabularyDisplayModeButtons = new Map();
   }
 
+  displaySelectionCopySettings(containerEl) {
+    new Setting(containerEl).setName("选区自动复制链接")
+      .setDesc("拖选 PDF 文字后，按下方模板复制；手动复制原文不受影响。")
+      .addToggle(toggle => toggle.setValue(this.plugin.settings.autoCopySelectionLinks !== false)
+        .onChange(enabled => this.plugin.setAutoCopySelectionLinksEnabled(enabled)));
+    const sample = { path: "12_books/示例.pdf", page: 40, pageLabel: "40", pageCount: 256,
+      text: "这是选中的原文。", linktext: "12_books/示例.pdf#page=40&obreader=sel.example", color: "yellow" };
+    let preview, copyInput, presetInput;
+    const updatePreview = () => {
+      try { preview?.setDesc(formatSelectionCopy(sample, this.plugin.settings)); }
+      catch (error) { preview?.setDesc(error.message); }
+    };
+    const update = async (key, value) => {
+      const next = { ...this.plugin.settings, [key]: value };
+      try { formatSelectionCopy(sample, next); }
+      catch (error) { preview?.setDesc(error.message); return; }
+      this.plugin.settings[key] = value;
+      if (key === "selectionCopyTemplate") presetInput?.setValue(
+        COPY_PRESETS.find(item => item.template === value)?.id || "custom");
+      updatePreview();
+      try { await this.plugin.saveSettings(); }
+      catch (error) { preview?.setDesc(`设置保存失败：${error.message}`); }
+    };
+    const fullWidth = setting => {
+      if (setting.settingEl?.style) Object.assign(setting.settingEl.style,
+        { flexDirection: "column", alignItems: "stretch", gap: "8px" });
+      if (setting.controlEl?.style) Object.assign(setting.controlEl.style,
+        { width: "100%", justifyContent: "stretch" });
+      return setting;
+    };
+    new Setting(containerEl).setName("选区复制预设")
+      .setDesc("选择预设后仍可在下方修改模板。仅原文预设不含链接，因此不会建立笔记反向引用。")
+      .addDropdown(dropdown => {
+        presetInput = dropdown;
+        dropdown.addOptions(Object.fromEntries([
+        ...COPY_PRESETS.map(preset => [preset.id, preset.name]), ["custom", "自定义"],
+      ])).setValue(COPY_PRESETS.find(preset => preset.template ===
+        (this.plugin.settings.selectionCopyTemplate ?? DEFAULT_COPY_TEMPLATE))?.id || "custom")
+        .onChange(async id => {
+          const preset = COPY_PRESETS.find(item => item.id === id);
+          if (!preset) return;
+          copyInput?.setValue(preset.template);
+          await update("selectionCopyTemplate", preset.template);
+        });
+      });
+    fullWidth(new Setting(containerEl)).setName("自定义复制内容")
+      .setDesc("PDF++ 常用格式：{{linkWithDisplay}}；引用块：> {{text}} 后换行加入 {{linkWithDisplay}}。跨页逐页生成。")
+      .addTextArea(input => {
+        copyInput = input;
+        input.setValue(this.plugin.settings.selectionCopyTemplate ?? DEFAULT_COPY_TEMPLATE)
+          .onChange(value => update("selectionCopyTemplate", value));
+        input.inputEl.rows = 4;
+        input.inputEl.style.width = "100%";
+      });
+    fullWidth(new Setting(containerEl)).setName("链接显示文字模板")
+      .setDesc("例如 p{{pageLabel}}，或 {{file.basename}} · p.{{page}}。只影响显示文字，不改变定位目标。")
+      .addTextArea(input => {
+        input.setValue(this.plugin.settings.selectionDisplayTemplate ?? DEFAULT_DISPLAY_TEMPLATE)
+          .onChange(value => update("selectionDisplayTemplate", value));
+        input.inputEl.rows = 2;
+        input.inputEl.style.width = "100%";
+      });
+    preview = new Setting(containerEl).setName("复制预览（示例）");
+    if (preview.descEl?.style) preview.descEl.style.whiteSpace = "pre-wrap";
+    updatePreview();
+    new Setting(containerEl).setName("可用模板参数")
+      .setDesc("{{text}} / {{selection}}、{{link}}、{{linkWithDisplay}}、{{linktext}}、{{display}}、{{linkToPage}}、{{linkToPageWithDisplay}}、{{file.path}}、{{file.name}}、{{file.basename}}、{{file.extension}}（pdf 支持相同属性）、{{folder.path}}、{{folder.name}}、{{page}}、{{pageLabel}}、{{pageCount}}、{{comment}}、{{color}} / {{colorName}}、{{calloutType}}；另有 {{anchorId}}、{{docKey}}、{{documentId}}。颜色为荧光笔色值，不是 PDF++ 自定义颜色名；无评论时为空。不执行 JavaScript 表达式，不提供 app、dv 等运行时 API。");
+  }
+
   display() {
     const { containerEl } = this;
     this.isDisplayingVocabularySettings = true;
@@ -1241,6 +1311,7 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.showStatusBar)
           .onChange((enabled) => this.plugin.setStatusBarEnabled(enabled)),
       );
+    this.displaySelectionCopySettings(containerEl);
     heading("LingQ / 词汇学习");
     new Setting(containerEl)
       .setName("启用 LingQ 式本地英语词汇学习")
@@ -3881,9 +3952,7 @@ class PdfReaderView extends EditableFileView {
         void this.plugin.setStatusBarEnabled(!this.plugin.settings.showStatusBar);
         break;
       case 'auto-copy-selection-toggle':
-        this.plugin.settings.autoCopySelectionLinks=this.plugin.settings.autoCopySelectionLinks===false;
-        void this.plugin.saveSettings();
-        for(const view of this.plugin.views)view.postToViewer({channel:CHANNEL,token:view.token,type:'auto-copy-selection-preference',enabled:this.plugin.settings.autoCopySelectionLinks});
+        void this.plugin.setAutoCopySelectionLinksEnabled(this.plugin.settings.autoCopySelectionLinks === false);
         break;
       case 'reader-auto-copy-cancel':
         if(message.documentId===this.documentId&&message.openRequest===this.openRequest)this.autoCopySelectionSequence=message.sequence;
@@ -5647,8 +5716,18 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return true;
   }
 
+  async setAutoCopySelectionLinksEnabled(enabled) {
+    this.settings.autoCopySelectionLinks = enabled === true;
+    for (const view of this.views) view.postToViewer({ channel: CHANNEL, token: view.token,
+      type: 'auto-copy-selection-preference', enabled: this.settings.autoCopySelectionLinks });
+    await this.saveSettings();
+  }
+
   async copySelectionLinks(view,message) {
     if(this.settings.autoCopySelectionLinks===false||!Array.isArray(message.captures)||!message.captures.length)return;
+    const copyFormat = { selectionCopyTemplate: this.settings.selectionCopyTemplate,
+      selectionDisplayTemplate: this.settings.selectionDisplayTemplate };
+    formatSelectionCopy({}, copyFormat);
     if(message.captures.some((capture,i)=>capture.kind!=='selection'||(i>0&&capture.pageIndex!==message.captures[i-1].pageIndex+1)))throw new Error('跨页选区不完整，剪贴板保持不变。');
     const identity={documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration};
     const current=()=>view.isCurrentReaderAnchorIdentity(identity)&&view.autoCopySelectionSequence===message.sequence;
@@ -5656,7 +5735,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     for(const capture of message.captures){
       if(!current())return;
       const requestId=makeToken();
-      view.pendingReaderAnchorCaptures.set(requestId,{...identity,mode:'auto',sequence:message.sequence,collectLink:link=>links.push(link)});
+      view.pendingReaderAnchorCaptures.set(requestId,{...identity,mode:'auto',copyFormat,sequence:message.sequence,collectLink:link=>links.push(link)});
       await this.handleReaderAnchorCapture(view,{...message,requestId,capture});
     }
     if(links.length!==message.captures.length||!current())return;
@@ -5830,7 +5909,16 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       ? `${capture.exactQuote.split("\n").map((line) => `> ${line}`).join("\n")}\n\n${link}`
       : link;
     if (!isCurrent()) return true;
-    if(pending.collectLink){pending.collectLink(link);return true;}
+    if (pending.collectLink) {
+      const copied = formatSelectionCopy({ path: relativePath, basename: view.documentFile?.basename || view.file?.basename,
+        linktext: `${safePath}#${fragment}`, page: pageIndex + 1, pageLabel: capture.pageLabel,
+        pageCount: view.annotationPageIdentity?.pageCount, text: capture.exactQuote,
+        color: capture.color, anchorId: target.id, docKey: document.docKey, documentId: document.documentId,
+      }, pending.copyFormat);
+      if (!copied.trim()) throw new Error("复制结果为空，剪贴板保持不变。");
+      pending.collectLink(copied);
+      return true;
+    }
     await this.copyReaderText(output);
     if (!isCurrent()) return true;
     new Notice(capture.kind === "selection" ? "已复制带稳定 Selection Anchor 的 PDF 链接。" : "已复制 PDF 链接。", 4000);
