@@ -1175,3 +1175,9 @@ html.pdf-reader-chord-pan #viewerContainer * { cursor: grabbing !important; user
 
 html[data-pdf-reader-readonly] #toolbarViewer button:disabled { opacity: .35; cursor: not-allowed; }
 #pdfReaderDecryptButton { width: auto; padding: 0 10px; font-size: 13px; }
+
+.pdfToolWheel .pdfToolWheelSnapshot { position:absolute; left:10%; top:116%; width:63px; height:58.5px; padding:0; border:0; background:none; pointer-events:auto; opacity:.65; transform:translate(-20%,-35%); filter:drop-shadow(0 0 5px #ffffff66); }
+.pdfToolWheelSnapshot svg {width:100%;height:100%;overflow:visible}
+.pdfToolWheelSnapshot .pointerPad {fill:#545b68aa;stroke:none;filter:blur(.5px)}
+.pdfToolWheelSnapshot:hover,.pdfToolWheelSnapshot.isPointerHot {opacity:1}
+.pdfToolWheelSnapshot.isPointerHot .pointerPad {fill:#4776aaee}

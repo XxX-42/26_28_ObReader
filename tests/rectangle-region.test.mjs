@@ -91,10 +91,10 @@ test('saved rectangle capture survives the live editor being replaced by hydrati
     {capture:{kind:'annotation',annotationUuid:'stable-uuid',pageIndex:1,pageNumber:2,pageIdentity:'second-page',sourceHash:'verified'}});
   assert.match(capture('annotation',{annotationUuid:'stable-uuid',pageIndex:5}).error,/身份/);
 });
-const finishSource = bridge.slice(bridge.indexOf('  async function finishRectangleRegion('),bridge.indexOf('  function installBridgeControls()'));
+const finishSource = bridge.slice(bridge.indexOf('  function styleRectangleSnapshot('),bridge.indexOf('  function armRectangleRegion(')) + bridge.slice(bridge.indexOf('  async function finishRectangleRegion('),bridge.indexOf('  function installBridgeControls()'));
 function regionHarness(save) {
   const pdfDocument={}, events=[], messages=[], status=[];
-  const pending={documentId:'doc',openRequest:1,pdfDocument,editor:{id:'runtime',pageIndex:3},finishing:false};
+  const pending={documentId:'doc',openRequest:1,pdfDocument,editor:{id:'runtime',pageIndex:3,_drawId:4,parent:{drawLayer:{updateProperties:(id,properties)=>events.push(['draw',properties])}}},finishing:false};
   const state={rectangleRegion:pending,activeDocumentId:'doc',activeOpenRequest:1,autoCopySequence:7,
     app:{pdfDocument,eventBus:{dispatch:(...args)=>events.push(args)}},annotationUuidByRuntimeId:new Map([['runtime','stable-uuid']])};
   const finish=new Function('state','requestSave','postToHost','showStatus','makeSyncUuid','window',`${finishSource};return finishRectangleRegion`)(state,save,(...args)=>messages.push(args),value=>status.push(value),()=> 'capture-id',{});
@@ -106,6 +106,7 @@ test('one-shot region capture waits for saved ACK and never copies on failed sav
   let release;const h=regionHarness(()=>new Promise(resolve=>{release=resolve}));
   const finishing=h.finish();assert.deepEqual(h.messages,[]);release(true);await finishing;
   assert.equal(h.messages.length,1);assert.equal(h.messages[0][1].annotationUuid,'stable-uuid');
+  assert.equal(h.pending.editor.__readerRegionSnapshot,true);assert.equal(h.events.find(x=>x[0]==='draw')[1].root['stroke-dasharray'],'6 4');
   assert.equal(h.messages[0][1].pageIndex,3);assert.equal(h.messages[0][1].output,'region-embed');assert.equal(h.events[0][1].mode,0);assert.equal(h.state.rectangleRegion,null);
 });
 test('new pointer input and replaced documents cancel a region awaiting save', async () => {

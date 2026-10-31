@@ -7,8 +7,8 @@
   // Install before PDF.js registers its capture listeners: its wheel consumes
   // pointermove and pointerup with stopImmediatePropagation.
   class ToolWheelColorController {
-    constructor({ getWheel, getToolKey, getColor, commit, activatePointer, window: host = window }) {
-      Object.assign(this, { getWheel, getToolKey, getColor, commit, activatePointer, host });
+    constructor({ getWheel, getToolKey, getColor, commit, activatePointer, activateSnapshot, canSnapshot, window: host = window }) {
+      Object.assign(this, { getWheel, getToolKey, getColor, commit, activatePointer, activateSnapshot, canSnapshot, host });
       this.down = this.down.bind(this);
       this.move = this.move.bind(this);
       this.up = this.up.bind(this);
@@ -114,6 +114,16 @@
         wheel.element.append(button); wheel.pointerControl = button;
       }
 
+      if (!wheel.snapshotControl && this.activateSnapshot) {
+        const button = wheel.element.ownerDocument.createElement('button');
+        button.className = 'pdfToolWheelSnapshot'; button.type = 'button';
+        button.setAttribute('aria-label', '矩形快照'); button.title = '矩形快照';
+        button.innerHTML = '<svg viewBox="0 0 70 65" aria-hidden="true"><path class="pointerPad" d="M4 4 H22 A44 44 0 0 0 66 48 V61 H4 Z"/><rect x="13" y="36" width="24" height="17" fill="none" stroke="white" stroke-width="2" stroke-dasharray="4 3"/></svg>';
+        button.addEventListener('click', event=>{event.preventDefault();event.stopImmediatePropagation();this.activateSnapshot(wheel)});
+        wheel.element.append(button);wheel.snapshotControl=button;
+      }
+
+      if (wheel.snapshotControl) wheel.snapshotControl.disabled = this.canSnapshot?.() === false;
       if (!wheel.colorLayoutPositioned) {
         const margin = 36;
         const maxRadius = Math.min(this.host.innerWidth, this.host.innerHeight) / 2 - margin;
@@ -215,6 +225,8 @@
         return;
       }
       this.decorate(wheel);
+      if (this.snapshotHit(wheel,event)) { this.clear(); wheel.snapshotControl.classList.add('isPointerHot');event.preventDefault();event.stopImmediatePropagation();return; }
+      wheel.snapshotControl?.classList.remove('isPointerHot');
       const overPointer = this.pointerHit(wheel, event);
       wheel.pointerControl?.classList.toggle("isPointerHot", overPointer);
       if (overPointer) {
@@ -242,6 +254,12 @@
       });
     }
 
+    snapshotHit(wheel,event) {
+      if (!this.activateSnapshot || wheel?.snapshotControl?.disabled || this.hit(event.clientX,event.clientY)) return false;
+      const r=wheel?.snapshotControl?.getBoundingClientRect();
+      return !!r && event.clientX>=r.left && event.clientX<=r.right && event.clientY>=r.top && event.clientY<=r.bottom;
+    }
+
     pointerHit(wheel, event) {
       if (this.hit(event.clientX, event.clientY)) return false;
       const rect = wheel?.pointerControl?.getBoundingClientRect();
@@ -256,6 +274,7 @@
 
     down(event) {
       const wheel = this.getWheel();
+      if (event.button === 0 && this.snapshotHit(wheel,event)) {event.preventDefault();event.stopImmediatePropagation();this.clear();this.activateSnapshot(wheel);return;}
       if (event.button === 0 && this.pointerHit(wheel, event)) {
         event.preventDefault(); event.stopImmediatePropagation(); this.clear(); this.activatePointer(wheel);
       }
@@ -263,6 +282,7 @@
 
     up(event) {
       const wheel = this.getWheel();
+      if (wheel && this.snapshotHit(wheel,event) && [0,1].includes(event.button)) {event.preventDefault();event.stopImmediatePropagation();this.clear();this.activateSnapshot(wheel);return;}
       if (wheel && this.pointerHit(wheel, event) && [0, 1].includes(event.button)) {
         event.preventDefault(); event.stopImmediatePropagation(); this.clear(); this.activatePointer?.(wheel); return;
       }

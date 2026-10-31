@@ -4375,6 +4375,14 @@ test(
     assert.equal(await viewer.evaluate(() => document.querySelector(".pdfToolWheelPointer").classList.contains("isPointerHot")),true,"Pointer shortcut must visibly acknowledge the mouse before release");
     await page.mouse.up({button:"middle"});
     await viewer.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 0);
+    await page.mouse.move(pointerFrame.x+pointerWheelPoint.x,pointerFrame.y+pointerWheelPoint.y);
+    await page.mouse.down({button:'middle'});
+    await viewer.waitForSelector('.pdfToolWheelSnapshot');
+    const snapshotPoint=await viewer.$eval('.pdfToolWheelSnapshot',el=>{const r=el.getBoundingClientRect();return {x:r.left+r.width*.3,y:r.top+r.height*.8}});
+    await page.mouse.move(pointerFrame.x+snapshotPoint.x,pointerFrame.y+snapshotPoint.y);
+    await page.mouse.up({button:'middle'});
+    await viewer.waitForFunction(()=>PDFViewerApplication.pdfViewer.annotationEditorMode===5 && !!window.__mouseBridgeState.rectangleRegion);
+    await viewer.evaluate(()=>PDFViewerApplication.eventBus.dispatch('switchannotationeditormode',{source:window,mode:0,createNewEditor:false}));
     await viewer.evaluate(() => { PDFViewerApplication.pdfViewer.currentPageNumber = 2; });
     await viewer.waitForSelector('.page[data-page-number="2"] .textLayer span');
     const crossPageExpected = await viewer.evaluate(() => {

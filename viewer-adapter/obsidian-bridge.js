@@ -293,6 +293,14 @@
       if (!state.readOnly && app.pdfViewer.annotationEditorMode !== -1) app.eventBus.dispatch("switchannotationeditormode", { source: window, mode: 0, createNewEditor: false });
       app.eventBus.dispatch("switchcursortool", { source: window, tool: 0 });
     },
+    canSnapshot: () => !state.readOnly && state.externalSourceConfirmed,
+    activateSnapshot: wheel => {
+      const app=state.app;
+      if (!app || app._toolWheel!==wheel || state.readOnly || state.disposed) return;
+      wheel.element.remove();app._toolWheel=null;app._toolWheelPointer=null;
+      app._toolWheelSuppressUntil=performanceNow()+1000;
+      armRectangleRegion();
+    },
     getToolKey: item => wheelToolKeys.get(item.mode),
     getColor: key => annotationToolColors?.get(wheelToolModes.get(key)),
     commit: ({ item, color, wheel }) => {
@@ -3365,6 +3373,11 @@
     cancel.focus();
   }
 
+  function styleRectangleSnapshot(editor) {
+    if (!editor?.__readerRegionSnapshot) return;
+    editor.parent?.drawLayer?.updateProperties(editor._drawId, { root: { 'stroke-dasharray': '6 4' } });
+  }
+
   function armRectangleRegion() {
     if (state.readOnly || !state.externalSourceConfirmed || state.disposed) return;
     state.rectangleRegion = { documentId: state.activeDocumentId, openRequest: state.activeOpenRequest,
@@ -3388,6 +3401,8 @@
       // Native Square already committed at the existing pointer boundary.
       // Returning to arrow must not create another drawing session.
       state.app.eventBus.dispatch("switchannotationeditormode", { source: window, mode: 0, createNewEditor: false });
+      pending.editor.__readerRegionSnapshot = true;
+      styleRectangleSnapshot(pending.editor);
       const saved = await requestSave("manual");
       if (!saved || !current()) return;
       const uuid = state.annotationUuidByRuntimeId.get(String(pending.editor.id));
@@ -4390,6 +4405,7 @@
         kind = [identity?.kind, exactRow?.kind, priorRow?.kind, runtimeBinding?.kind]
           .map(normalizeSyncKind).find(candidate => EXTERNAL_ANNOTATION_KINDS.has(candidate)) || kind;
       }
+      if (normalizeSyncKind(kind) === 'Square' && (editor?.__readerRegionSnapshot || value.regionSnapshot || exactRow?.editor?.regionSnapshot || priorRow?.value?.regionSnapshot)) value = { ...value, regionSnapshot: true };
       if (value?.deleted !== true && normalizeSyncKind(kind) === "Highlight") {
         const selectionGroup = state.annotationSelectionGroups?.get(runtimeId) || value.selectionGroup ||
           exactRow?.editor?.selectionGroup || exactRow?.editorPayload?.selectionGroup || priorRow?.value?.selectionGroup;
@@ -5459,6 +5475,7 @@
     if (!editor) {
       throw new Error(`PDF.js refused to hydrate ${row.kind} annotation ${row.uuid}.`);
     }
+    if (payload.regionSnapshot === true) editor.__readerRegionSnapshot = true;
     const changesAfterDeserialize = snapshotChanges(app);
     const rowsAfterDeserialize = getAnnotationStorageRows(app);
     const hadConcurrentMutation =
@@ -5487,6 +5504,7 @@
       // through PDF.js's toolbar path, so explicitly reveal the builder once
       // it is no longer empty.
       app.pdfViewer?.getPageView?.(row.pageIndex)?.annotationEditorLayer?.show?.();
+      styleRectangleSnapshot(editor);
       const runtimeId = String(editor.id);
       if (row.editor?.readerLink?.version === 1 && editor.div) {
         editor.div.dataset.readerLinkedAnchor = row.editor.readerLink.anchorId;
