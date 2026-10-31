@@ -63062,7 +63062,7 @@ var __PDFReaderSelectionCopyFormat = (() => {
       var COPY_PRESETS = Object.freeze([
         { id: "link", name: "\u4EC5\u5B9A\u4F4D\u94FE\u63A5", template: "{{linkWithDisplay}}" },
         { id: "compact", name: "\u77ED\u663E\u793A\u6587\u5B57\uFF08p40\uFF09", template: "[[{{linktext}}|p{{pageLabel}}]]" },
-        { id: "plain-link", name: "\u94FE\u63A5\u4E0D\u5E26\u663E\u793A\u6587\u5B57", template: "{{link}}" },
+        { id: "plain-link", name: "\u88F8\u94FE\u63A5\u5730\u5740\uFF08\u65E0\u62EC\u53F7\uFF09", template: "{{link}}" },
         { id: "text", name: "\u4EC5\u9009\u4E2D\u6587\u5B57", template: "{{text}}" },
         { id: "quote", name: "PDF++ \u5F15\u7528\u5757\uFF0B\u94FE\u63A5", template: "> {{text}}\n\n{{linkWithDisplay}}" },
         { id: "callout", name: "PDF++ Callout\uFF0B\u94FE\u63A5", template: "> [!{{calloutType}}] {{linkWithDisplay}}\n> {{text}}" }
@@ -63123,7 +63123,7 @@ var __PDFReaderSelectionCopyFormat = (() => {
         Object.assign(variables, {
           display,
           linktext,
-          link: `[[${linktext}]]`,
+          link: linktext,
           linkWithDisplay: `[[${linktext}|${safe(display)}]]`,
           linkToPage: `[[${pageLinktext}]]`,
           linkToPageWithDisplay: `[[${pageLinktext}|${safe(display)}]]`

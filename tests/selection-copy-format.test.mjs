@@ -7,6 +7,10 @@ const context = { path: '12_books/书.pdf', page: 40, pageLabel: '二十七', pa
 test('default output preserves the complete stable target and existing display', () => {
   assert.equal(formatSelectionCopy(context), '[[12_books/书.pdf#page=40&obreader=sel.uuid|书 · p.40]]');
 });
+test('link is a bare destination and can be wrapped explicitly without double brackets', () => {
+  assert.equal(formatSelectionCopy(context,{selectionCopyTemplate:'{{link}}'}),context.linktext);
+  assert.equal(formatSelectionCopy(context,{selectionCopyTemplate:'[[{{link}}]]'}),'[['+context.linktext+']]');
+});
 test('PDF++ data parameters and aliases use actual source values', () => {
   const fields=['file.path','pdf.basename','folder.name','page','pageLabel','pageCount','selection','colorName','comment','anchorId'];
   assert.equal(formatSelectionCopy(context,{selectionCopyTemplate:fields.map(f=>'{{'+f+'}}').join(';')}),

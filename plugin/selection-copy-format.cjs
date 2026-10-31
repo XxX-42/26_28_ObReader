@@ -4,7 +4,7 @@ const DEFAULT_DISPLAY_TEMPLATE = '{{file.basename}} · p.{{page}}';
 const COPY_PRESETS = Object.freeze([
   { id: 'link', name: '仅定位链接', template: '{{linkWithDisplay}}' },
   { id: 'compact', name: '短显示文字（p40）', template: '[[{{linktext}}|p{{pageLabel}}]]' },
-  { id: 'plain-link', name: '链接不带显示文字', template: '{{link}}' },
+  { id: 'plain-link', name: '裸链接地址（无括号）', template: '{{link}}' },
   { id: 'text', name: '仅选中文字', template: '{{text}}' },
   { id: 'quote', name: 'PDF++ 引用块＋链接', template: '> {{text}}\n\n{{linkWithDisplay}}' },
   { id: 'callout', name: 'PDF++ Callout＋链接', template: '> [!{{calloutType}}] {{linkWithDisplay}}\n> {{text}}' },
@@ -46,7 +46,7 @@ function formatSelectionCopy(context, settings = {}) {
   };
   const display = interpolate(settings.selectionDisplayTemplate ?? DEFAULT_DISPLAY_TEMPLATE, variables);
   Object.assign(variables, {
-    display, linktext, link: `[[${linktext}]]`, linkWithDisplay: `[[${linktext}|${safe(display)}]]`,
+    display, linktext, link: linktext, linkWithDisplay: `[[${linktext}|${safe(display)}]]`,
     linkToPage: `[[${pageLinktext}]]`, linkToPageWithDisplay: `[[${pageLinktext}|${safe(display)}]]`,
   });
   return interpolate(settings.selectionCopyTemplate ?? DEFAULT_COPY_TEMPLATE, variables);

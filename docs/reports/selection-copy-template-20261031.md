@@ -70,3 +70,9 @@ Source PDF SHA-256 remains
 `a971feb1bc901cc995cb9144da6368fb7eb895007e37ab65e8703d4ffdcaaf81`.
 Copied links create existing Selection Anchor records as intended; this is not
 a claim that the entire annotation directory stays byte-for-byte unchanged.
+
+Follow-up at the user's request: `{{link}}` now returns the bare destination,
+identical to `{{linktext}}`, without `[[ ]]`. This intentionally differs from
+PDF++'s variable convention. Use `[[{{link}}]]` to wrap it explicitly;
+`{{linkWithDisplay}}` retains the complete wikilink. The bare-link regression was
+red before this change; final formatter/auto-copy/Host tests passed 133/133.
