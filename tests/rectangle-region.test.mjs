@@ -50,10 +50,19 @@ test('document pool borrows only verified matching Readers and never destroys th
 });
 
 const bridge = await readFile(new URL('../viewer-adapter/obsidian-bridge.js',import.meta.url),'utf8');
+test('saved rectangle capture survives the live editor being replaced by hydration', () => {
+  const source = bridge.slice(bridge.indexOf('  function captureReaderAnchor('), bridge.indexOf('  function sendReaderAnchorCapture('));
+  const state = { app: { pdfViewer: {} }, actualSourceIdentity: { identityStatus: 'KNOWN',
+    orderedPageIdentities: ['first-page','second-page'], sourceHash: 'verified' } };
+  const capture = new Function('state', `${source};return captureReaderAnchor`)(state);
+  assert.deepEqual(capture('annotation',{annotationUuid:'stable-uuid',pageIndex:1}),
+    {capture:{kind:'annotation',annotationUuid:'stable-uuid',pageIndex:1,pageNumber:2,pageIdentity:'second-page',sourceHash:'verified'}});
+  assert.match(capture('annotation',{annotationUuid:'stable-uuid',pageIndex:5}).error,/身份/);
+});
 const finishSource = bridge.slice(bridge.indexOf('  async function finishRectangleRegion('),bridge.indexOf('  function installBridgeControls()'));
 function regionHarness(save) {
   const pdfDocument={}, events=[], messages=[], status=[];
-  const pending={documentId:'doc',openRequest:1,pdfDocument,editor:{id:'runtime'},finishing:false};
+  const pending={documentId:'doc',openRequest:1,pdfDocument,editor:{id:'runtime',pageIndex:3},finishing:false};
   const state={rectangleRegion:pending,activeDocumentId:'doc',activeOpenRequest:1,autoCopySequence:7,
     app:{pdfDocument,eventBus:{dispatch:(...args)=>events.push(args)}},annotationUuidByRuntimeId:new Map([['runtime','stable-uuid']])};
   const finish=new Function('state','requestSave','postToHost','showStatus','makeSyncUuid','window',`${finishSource};return finishRectangleRegion`)(state,save,(...args)=>messages.push(args),value=>status.push(value),()=> 'capture-id',{});
@@ -65,7 +74,7 @@ test('one-shot region capture waits for saved ACK and never copies on failed sav
   let release;const h=regionHarness(()=>new Promise(resolve=>{release=resolve}));
   const finishing=h.finish();assert.deepEqual(h.messages,[]);release(true);await finishing;
   assert.equal(h.messages.length,1);assert.equal(h.messages[0][1].annotationUuid,'stable-uuid');
-  assert.equal(h.messages[0][1].output,'region-embed');assert.equal(h.events[0][1].mode,0);assert.equal(h.state.rectangleRegion,null);
+  assert.equal(h.messages[0][1].pageIndex,3);assert.equal(h.messages[0][1].output,'region-embed');assert.equal(h.events[0][1].mode,0);assert.equal(h.state.rectangleRegion,null);
 });
 test('new pointer input and replaced documents cancel a region awaiting save', async () => {
   for(const change of [h=>h.state.autoCopySequence++,h=>h.state.activeOpenRequest++,h=>h.state.disposed=true]) {

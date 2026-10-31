@@ -681,12 +681,13 @@
     const actual = state.actualSourceIdentity;
     if (!app?.pdfViewer || !actual || actual.identityStatus !== "KNOWN") return { error: "PDF 页面身份尚未确认。" };
     if (mode === "annotation" && occurrence?.annotationUuid) {
+      // The saved snapshot can replace the live editor before the host asks
+      // for its anchor. The host verifies UUID, page and geometry against the
+      // durable snapshot; never require the old editor instance to survive.
       const uuid = occurrence.annotationUuid;
-      const binding = [...state.annotationUuidByRuntimeId].find(([, value]) => value === uuid);
-      const editor = binding && app.pdfViewer?._layerProperties?.annotationEditorUIManager?.getEditor?.(binding[0]);
-      const pageIndex = editor?.pageIndex;
+      const pageIndex = occurrence.pageIndex;
       const pageIdentity = actual.orderedPageIdentities?.[pageIndex];
-      if (!editor || normalizeSyncKind(editor.editorType) !== "Square" || !pageIdentity) return { error: "矩形目标已失效。" };
+      if (!Number.isSafeInteger(pageIndex) || pageIndex < 0 || !pageIdentity) return { error: "矩形页面身份已失效。" };
       return { capture: { kind: "annotation", annotationUuid: uuid, pageIndex,
         pageNumber: pageIndex + 1, pageIdentity, sourceHash: actual.sourceHash } };
     }
@@ -3390,7 +3391,7 @@
       if (!uuid) throw new Error("无法确认已保存矩形的 UUID。");
       postToHost("reader-anchor-occurrence-link-request", { requestId: makeSyncUuid(),
         documentId: pending.documentId, openRequest: pending.openRequest,
-        output: "region-embed", annotationUuid: uuid });
+        output: "region-embed", annotationUuid: uuid, pageIndex: pending.editor.pageIndex });
     } catch (error) { if (current()) showStatus(`区域链接未复制：${error.message || error}`); }
     finally { if (state.rectangleRegion === pending) state.rectangleRegion = null; }
   }
@@ -12055,7 +12056,7 @@
         startIndex: message.startIndex,
         endIndex: message.endIndex,
         expectedSurface: message.expectedSurface,
-        annotationUuid: message.annotationUuid,
+        annotationUuid: message.annotationUuid, pageIndex: message.pageIndex,
       });
       return;
     }

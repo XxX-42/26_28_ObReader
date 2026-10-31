@@ -3219,7 +3219,7 @@ class PdfReaderView extends EditableFileView {
     const sent = this.postToViewer({ channel: CHANNEL, token: this.token,
       type: "reader-anchor-capture-request", requestId, mode,
       documentId: identity.documentId, openRequest: identity.openRequest,
-      ...(options.regionEmbed === true ? { annotationUuid: details?.annotationUuid } : {}),
+      ...(options.regionEmbed === true ? { annotationUuid: details?.annotationUuid, pageIndex: details?.pageIndex } : {}),
       ...(mode === "occurrence" && details ? {
         pageNumber: details.pageNumber, startIndex: details.startIndex, endIndex: details.endIndex,
         expectedSurface: details.expectedSurface,
@@ -3792,9 +3792,9 @@ class PdfReaderView extends EditableFileView {
     if (message.type === "reader-anchor-occurrence-link-request" && message.output === "region-embed") {
       if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
           message.openRequest !== this.openRequest || typeof message.annotationUuid !== "string" ||
-          message.annotationUuid.length > 512 || typeof message.requestId !== "string" || message.requestId.length > 128) return;
+          message.annotationUuid.length > 512 || !Number.isSafeInteger(message.pageIndex) || message.pageIndex < 0 || typeof message.requestId !== "string" || message.requestId.length > 128) return;
       this.regionEmbedRequestId = message.requestId;
-      this.requestReaderAnchorCapture("annotation", { annotationUuid: message.annotationUuid }, message.requestId,
+      this.requestReaderAnchorCapture("annotation", { annotationUuid: message.annotationUuid, pageIndex: message.pageIndex }, message.requestId,
         { regionEmbed: true });
       return;
     }
