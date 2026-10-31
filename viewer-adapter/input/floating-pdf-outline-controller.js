@@ -57,7 +57,8 @@
           const viewer = document.getElementById('viewerContainer');
           if (!viewer) return;
           const rect = viewer.getBoundingClientRect();
-          const atEdge = event.clientX >= rect.left && event.clientX <= rect.left + 28 && event.clientY >= rect.top && event.clientY <= rect.bottom;
+          const rightSide = document.documentElement.classList.contains('pdfReaderAnnotationsDockedLeft');
+          const atEdge = (rightSide ? event.clientX >= rect.right - 28 && event.clientX <= rect.right : event.clientX >= rect.left && event.clientX <= rect.left + 28) && event.clientY >= rect.top && event.clientY <= rect.bottom;
           if (atEdge) {
             clearTimeout(this.timer); this.timer = null;
             if (!this.explicit && this.panel.hidden) {
