@@ -12261,6 +12261,8 @@
           !state.app?.pdfDocument) return;
       const snapshot = validateExternalAnnotations(message.externalAnnotations);
       state.activeDocumentId = message.documentId;
+      annotationToolColors?.applySnapshot(message.preferredAnnotationToolColors);
+      document.documentElement.style.setProperty("--pdf-reader-highlight-color", annotationToolColors?.get(9) || "#fff066");
       if (state.nativeAnnotationGateToken) state.nativeAnnotationGateToken.documentId = message.documentId;
       state.externalSource = snapshot.source;
       state.compactInkEncoding = snapshot.compactInkEncoding === true;

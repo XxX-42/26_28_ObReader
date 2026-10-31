@@ -82,3 +82,15 @@ test('failed choice leaves actual default unchanged and confirmed choice applies
   assert.equal(s.controller.get(3), '#ABCDEF');
   assert.equal(s.posts.length, 2);
 });
+
+test('confirmed colors survive preview-to-final identity by applying the fresh host snapshot', () => {
+ const s=setup();s.manager.mode=0;
+ s.controller.applySnapshot({3:'#2F9E44',15:'#1971C2'});
+ s.changeIdentity({documentId:'final-document',openRequest:1,rendererGeneration:'gen'});
+ s.controller.applySnapshot({3:'#2F9E44',15:'#1971C2'});
+ s.manager.mode=3;s.controller.onEditorModeChanged();
+ assert.equal(s.controller.get(3),'#2F9E44');assert.equal(s.messages.at(-1).type,12);assert.equal(s.messages.at(-1).value,'#2F9E44');
+ s.manager.mode=15;s.controller.onEditorModeChanged();
+ assert.equal(s.controller.get(15),'#1971C2');assert.equal(s.messages.at(-1).type,21);assert.equal(s.messages.at(-1).value,'#1971C2');
+ assert.equal(s.posts.length,0,'restoring a snapshot must not write preferences back');
+});

@@ -3008,6 +3008,7 @@ class PdfReaderView extends EditableFileView {
       this.postToViewer({ channel: CHANNEL, token: this.token,
         type: "annotation-initialize-late", previousDocumentId: previewDocumentId,
         documentId: this.documentId, openRequest: request,
+        preferredAnnotationToolColors: normalizeAnnotationToolColors(this.plugin.settings.annotationToolColors),
         externalAnnotations });
       await restoreReaderState(this, request);
       }).catch((error) => {
