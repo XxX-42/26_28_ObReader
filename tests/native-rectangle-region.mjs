@@ -96,6 +96,7 @@ try {
   assert.equal(report.saved.annotations.length,1);assert.equal(report.saved.annotations[0].kind,'Square');assert.equal(report.saved.saveCalls,0);
   await wait(`return !!document.querySelector('.pdfReaderRectangleEmbed img');`,'real Markdown embed');
   report.firstEmbedMs=await evaluate(`return await app.__regionNative.firstEmbedTiming;`);
+  assert.ok(report.firstEmbedMs<=300,`first region image exceeded 300ms: ${report.firstEmbedMs}`);
   report.firstEmbedProfile=await evaluate(`const r=app.__regionNative;r.restoreProfile.splice(0).reverse().forEach(f=>f());return r.firstProfile;`);
   report.sourceProof=await evaluate(`const r=app.__regionNative,v=r.view,stat=await app.vault.adapter.stat(v.documentFile.path),s=v.annotationDocument.source;return {proof:r.host.isVerifiedReaderSource?.(v,stat),stat,hash:v.annotationSourceHash,source:{hash:s?.sourceHash,mtime:s?.mtime,size:s?.size}};`);
   report.embed=await evaluate(`const img=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(img=>img.getBoundingClientRect().width>0);await img.decode();const blob=await (await fetch(img.src)).blob();return {width:img.naturalWidth,height:img.naturalHeight,alt:img.alt,encodedBytes:blob.size,rawRgbaBytes:img.naturalWidth*img.naturalHeight*4};`);
@@ -112,6 +113,7 @@ try {
         const observer=new MutationObserver(()=>{if(done)return;const img=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(x=>x.getBoundingClientRect().width>0);if(!img)return;done=true;img.decode().then(()=>{clearTimeout(timer);observer.disconnect();resolve(performance.now()-t)},reject)});observer.observe(document.body,{childList:true,subtree:true});});
       await r.mdLeaf.setViewState({type:'markdown',state:{file:r.notePath,mode:'preview'}});return await ready;`));
   }
+  assert.ok(report.warmReopenMs.every(ms=>ms<=300),'warm region images must complete within 300ms');
   const shot=nativeCdp('Page.captureScreenshot',{format:'png'});await writeFile(path.join(output,'markdown-embed.png'),Buffer.from(shot.data,'base64'));
   report.readingMode=await evaluate(`const r=app.__regionNative;await r.mdLeaf.setViewState({type:'markdown',state:{file:r.notePath,mode:'preview'}});return r.mdLeaf.view.getMode();`);
   await wait(`return [...document.querySelectorAll('.pdfReaderRectangleEmbed img')].some(img=>img.getBoundingClientRect().width>0&&img.naturalWidth>0);`,'reading view image');
@@ -192,4 +194,31 @@ finally {
     for(const leaf of app.workspace.getLeavesOfType('pdf-web-reader-view').filter(l=>l.view.documentFile?.path?.startsWith(r.directory+'/'))){await leaf.view.prepareControlledClose('native-region-cleanup');leaf.detach();}
     r.mdLeaf?.detach();p.copyReaderText=r.originalCopy;p.openPdf=r.originalOpen;app.vault.modifyBinary=r.originalModify;r.host.dispose();p.annotationHost=r.originalHost;return {restored:p.annotationHost===r.originalHost};`);}catch(error){report.cleanupError=error.stack;}
   await writeFile(path.join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({output,...report},null,2));
+}
+
+// Optional real plugin reload: retain only the test namespace's disk-backed
+// Store facade for route resolution, never its PDF document or image cache.
+if(report.pass && process.env.OBREADER_REGION_RELOAD==='1') {
+  try {
+    await evaluate(`const r=app.__regionNative;r.beforeReloadPlugin=app.plugins.plugins['pdf-web-reader'];
+      await app.plugins.disablePlugin('pdf-web-reader');await app.plugins.enablePlugin('pdf-web-reader');return true;`);
+    report.afterPluginReload=await evaluate(`const r=app.__regionNative,p=app.plugins.plugins['pdf-web-reader'];
+      if(p===r.beforeReloadPlugin)throw Error('plugin instance was not replaced');
+      const originalStore=p.annotationHost.store,originalAcquire=p.rectangleDocumentPool.acquire,originalRead=app.vault.readBinary;
+      p.annotationHost.store=r.host.store;let pdfReads=0,acquires=0,leaf;
+      p.rectangleDocumentPool.acquire=async function(...args){acquires++;return originalAcquire.apply(this,args)};
+      app.vault.readBinary=async function(file,...args){if(file.path===r.pdfPath)pdfReads++;return originalRead.call(this,file,...args)};
+      try {
+        const start=performance.now();
+        const done=new Promise((resolve,reject)=>{const timer=setTimeout(()=>{observer.disconnect();reject(Error('reload image timeout'))},10000);
+          const observer=new MutationObserver(()=>{const img=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(x=>x.getBoundingClientRect().width>0);if(!img)return;
+            observer.disconnect();img.decode().then(()=>{clearTimeout(timer);resolve(performance.now()-start)},reject)});observer.observe(document.body,{childList:true,subtree:true});});
+        leaf=app.workspace.getLeaf(true);await leaf.openFile(app.vault.getAbstractFileByPath(r.notePath));
+        const ms=await done;return {ms,pdfReads,acquires,readers:app.workspace.getLeavesOfType('pdf-web-reader-view').length};
+      } finally {leaf?.detach();p.annotationHost.store=originalStore;p.rectangleDocumentPool.acquire=originalAcquire;app.vault.readBinary=originalRead;}
+    `);
+    assert.equal(report.afterPluginReload.pdfReads,0);assert.equal(report.afterPluginReload.acquires,0);assert.equal(report.afterPluginReload.readers,0);
+    assert.ok(report.afterPluginReload.ms<=300,`reloaded region image exceeded 300ms: ${report.afterPluginReload.ms}`);
+  } catch(error) {report.reloadError=error.stack;throw error;}
+  finally {await writeFile(path.join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({afterPluginReload:report.afterPluginReload,reloadError:report.reloadError}));}
 }
