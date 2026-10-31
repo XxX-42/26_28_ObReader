@@ -67,6 +67,35 @@ test('120 changes retain current state and exactly the last 100 before/after rec
   assert.equal((await s.readHistory(document.sourcePath,pairId)).at(-1).after.deleted,true);
 });
 
+test('per-device reader state survives annotation writes without changing history',async()=>{
+  const w=world(),s=w.store();await s.initialize({document,pairId,annotations:[annotation('A','original')]});
+  await s.saveReaderState({sourcePath:document.sourcePath,pairId,deviceId:'windows',state:{pageNumber:12,sidebar:{side:'left',width:400}}});
+  await s.saveReaderState({sourcePath:document.sourcePath,pairId,deviceId:'ipad',state:{pageNumber:7}});
+  await s.save({sourcePath:document.sourcePath,pairId,changes:[annotation('B','next')]});
+  const result=await w.store().readCurrent(document.sourcePath,pairId);
+  assert.equal(result.header.readerStates.windows.sidebar.side,'left');
+  assert.equal(result.header.readerStates.ipad.pageNumber,7);
+  assert.equal(result.annotations.length,2);
+  assert.equal((await s.readHistory(document.sourcePath,pairId)).length,1);
+  await assert.rejects(s.saveReaderState({sourcePath:document.sourcePath,pairId,deviceId:'__proto__',state:{pageNumber:1}}),{code:'V15_READER_STATE_INVALID'});
+});
+
+test('reader state and annotation writes serialize and retain previously committed bytes on failure',async()=>{
+  const w=world(),s=w.store();await s.initialize({document,pairId,annotations:[annotation('A','original')]});
+  await Promise.all([
+    s.saveReaderState({sourcePath:document.sourcePath,pairId,deviceId:'windows',state:{pageNumber:19}}),
+    s.save({sourcePath:document.sourcePath,pairId,changes:[annotation('B','new')]}),
+  ]);
+  const good=await s.readCurrent(document.sourcePath,pairId);
+  assert.equal(good.header.readerStates.windows.pageNumber,19);
+  assert.deepEqual(good.annotations.map(row=>row.uuid).sort(),['A','B']);
+  const path=s.pathsFor(document.sourcePath).current,original=w.adapter.process;
+  const bytes=w.files.get(path);
+  w.adapter.process=async(p,fn)=>{if(p===path)throw Error('disk failure');return original(p,fn)};
+  await assert.rejects(s.saveReaderState({sourcePath:document.sourcePath,pairId,deviceId:'windows',state:{pageNumber:20}}),/disk failure/);
+  assert.equal(w.files.get(path),bytes);
+});
+
 test('history-first failed save is not acknowledged or presented as committed history',async()=>{
   const w=world(),s=w.store();await s.initialize({document,pairId,annotations:[annotation('A','before')]});
   const path=s.pathsFor(document.sourcePath).current,original=w.adapter.process;

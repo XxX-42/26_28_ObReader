@@ -787,6 +787,36 @@ function localAnnotationDeviceId() {
   }
 }
 
+function readerStateLocalKey(view) {
+  const path = view.documentFile?.path || view.file?.path || view.requestedPath;
+  return `pdf-web-reader.reader-state.v1:${view.app.vault.getName()}:${localAnnotationDeviceId()}:${path}`;
+}
+async function persistReaderState(view, state) {
+  const path = view.documentFile?.path || view.file?.path || view.requestedPath;
+  if (!path || !state || typeof state !== 'object' || JSON.stringify(state).length > 16384) return;
+  const value = { ...state, savedAt: Date.now() };
+  globalThis.localStorage?.setItem(readerStateLocalKey(view), JSON.stringify(value));
+  view.latestReaderState = value;
+  const core = view.plugin.annotationHost?.store?.core;
+  if (!core?.saveReaderState || view.annotationSourceMismatch || view.annotationStorageUnavailable || view.annotationLoading) return;
+  const current = await core.readCurrent(path);
+  if (!current || current.document.documentId !== view.annotationDocument?.documentId) return;
+  await core.saveReaderState({sourcePath:path,pairId:current.pairId,deviceId:localAnnotationDeviceId(),state:value});
+}
+async function restoreReaderState(view, request) {
+  let saved = null;
+  try { saved = JSON.parse(globalThis.localStorage?.getItem(readerStateLocalKey(view)) || 'null'); } catch {}
+  const path = view.documentFile?.path || view.file?.path || view.requestedPath;
+  try {
+    const current = await view.plugin.annotationHost?.store?.core?.readCurrent(path);
+    const stored = current?.header?.readerStates?.[localAnnotationDeviceId()];
+    if (stored && (!saved || stored.savedAt > saved.savedAt)) saved = stored;
+  } catch (error) { view.plugin.sessionLog?.record('reader-state', {error:error.message}); }
+  if (view.openRequest !== request || view.teardownStarted) return;
+  view.latestReaderState = saved;
+  view.postToViewer({channel:CHANNEL,token:view.token,type:'reader-state-restore',documentId:view.documentId,openRequest:request,state:saved,restorePosition:!view.pendingReaderTarget});
+}
+
 class AnnotationDeviceReviewModal extends Modal {
   constructor(app, plugin, document, checkpointHash, devices) {
     super(app);
@@ -2904,6 +2934,7 @@ class PdfReaderView extends EditableFileView {
         type: "annotation-initialize-late", previousDocumentId: previewDocumentId,
         documentId: this.documentId, openRequest: request,
         externalAnnotations });
+      await restoreReaderState(this, request);
       }).catch((error) => {
         if (request !== this.openRequest || this.teardownStarted) return;
         this.annotationHydrationAllowed = false;
@@ -3911,6 +3942,10 @@ class PdfReaderView extends EditableFileView {
         this.renderStatus();
         break;
       }
+      case "reader-state-save":
+        if (message.documentId !== this.documentId || message.openRequest !== this.openRequest || message.rendererGeneration !== this.rendererGeneration) return;
+        void persistReaderState(this, message.state).catch(error => this.plugin.sessionLog?.record('reader-state', {error:error.message}));
+        break;
       case "save":
         void this.saveFile(
           message.data,
@@ -3919,7 +3954,8 @@ class PdfReaderView extends EditableFileView {
           message.revision,
           message.origin,
           message,
-        );
+        ).then(() => { if (this.latestReaderState && message.documentId === this.documentId) return persistReaderState(this, this.latestReaderState); })
+          .catch(error => this.plugin.sessionLog?.record('reader-state', {error:error.message}));
         break;
       case "recover":
         void this.recoverFile(

@@ -137,6 +137,9 @@
     annotationSidebarController: null,
     annotationSidebarTextGeometryCache: new WeakMap(),
     annotationSidebarOffscreenPages: new Map(),
+    readerStateReady: false,
+    readerStateTimer: null,
+    pendingReaderState: null,
     annotationTargetTextByRuntimeId: new Map(),
     annotationSelectionGroups: new Map(),
     pendingHighlightSelection: null,
@@ -2224,6 +2227,7 @@
       if (resizePointer !== event.pointerId) return;
       resizePointer = null;
       if (resizeHandle.hasPointerCapture?.(event.pointerId)) resizeHandle.releasePointerCapture(event.pointerId);
+      scheduleReaderStateSave();
     }
     resizeHandle.addEventListener("pointerdown", onResizeDown);
     resizeHandle.addEventListener("pointermove", onResizeMove);
@@ -2237,6 +2241,7 @@
       dockButton.textContent = docked ? "恢复浮窗" : "停靠右侧";
       dockButton.setAttribute("aria-pressed", String(docked));
       window.dispatchEvent(new Event("resize"));
+      scheduleReaderStateSave();
     }
     function onDockClick() { docked = !docked; syncDock(); }
     dockButton.addEventListener("click", onDockClick);
@@ -2677,6 +2682,17 @@
       closeAndClear,
       refreshIfOpen,
       isOpen: () => open,
+      captureState: () => ({open,docked,side:dockSide,width:parseFloat(document.documentElement.style.getPropertyValue('--pdf-reader-annotation-sidebar-width')) || 360,scrollTop:list.parentElement?.scrollTop || 0}),
+      restoreState(value) {
+        if (!value || typeof value !== 'object') return;
+        docked = value.docked === true;
+        dockSide = value.side === 'left' ? 'left' : 'right';
+        if (Number.isFinite(value.width)) document.documentElement.style.setProperty('--pdf-reader-annotation-sidebar-width', `${clampAnnotationSidebarWidth(value.width,window.innerWidth)}px`);
+        if (value.open === true) { open = true; menu.classList.remove('hidden'); button.setAttribute('aria-expanded','true'); scheduleRender({reloadTargets:true}); }
+        else close();
+        syncDock();
+        if (Number.isFinite(value.scrollTop)) requestAnimationFrame(() => { if (list.parentElement) list.parentElement.scrollTop = value.scrollTop; });
+      },
       createReviewDraft,
       dispose() {
         closeAndClear();
@@ -5475,6 +5491,7 @@
       state.annotationSnapshot = getAnnotationStorageRows();
     }
     state.externalSourceConfirmed = true;
+    if (state.pendingReaderState) void restorePendingReaderState();
     for (const row of merged.values()) seedSyncClock({ identities: [row.clock] });
     state.annotationSidebarController?.refreshIfOpen();
     return {
@@ -5972,7 +5989,36 @@
         left: Number.isFinite(container?.scrollLeft) ? container.scrollLeft : 0,
       },
       tool: Number.isSafeInteger(mode) ? mode : state.editorMode,
+      scrollMode: viewer?.scrollMode,
+      spreadMode: viewer?.spreadMode,
+      annotationSidebar: state.annotationSidebarController?.captureState?.(),
     };
+  }
+
+  function saveReaderStateNow() {
+    clearTimeout(state.readerStateTimer); state.readerStateTimer = null;
+    if (!state.readerStateReady || !state.activeDocumentId || !state.app?.pdfDocument || state.disposed) return;
+    postToHost('reader-state-save', {documentId:state.activeDocumentId,openRequest:state.activeOpenRequest,state:captureSyncViewState()});
+  }
+  function scheduleReaderStateSave() {
+    if (!state.readerStateReady) return;
+    clearTimeout(state.readerStateTimer);
+    state.readerStateTimer = setTimeout(saveReaderStateNow, 500);
+  }
+  async function restorePendingReaderState() {
+    const pending = state.pendingReaderState;
+    if (!pending || !state.externalSourceConfirmed || !state.app?.pdfDocument) return;
+    state.pendingReaderState = null;
+    const session = state.openSession, app = state.app;
+    try {
+      if (pending.state) {
+        if (pending.restorePosition !== false) await restoreSyncViewState(app, pending.state, session);
+        if (state.openSession !== session || state.disposed) return;
+        if ([0,1,2,3].includes(pending.state.scrollMode)) app.pdfViewer.scrollMode = pending.state.scrollMode;
+        if ([0,1,2].includes(pending.state.spreadMode)) app.pdfViewer.spreadMode = pending.state.spreadMode;
+        state.annotationSidebarController?.restoreState?.(pending.state.annotationSidebar);
+      }
+    } finally { if (state.openSession === session && !state.disposed) { state.readerStateReady = true; scheduleReaderStateSave(); } }
   }
 
   async function restoreSyncViewState(app, viewState, session) {
@@ -10761,6 +10807,7 @@
   }
 
   function handlePrepareClose(message) {
+    saveReaderStateNow();
     const openRequest = Number.isInteger(message.openRequest)
       ? message.openRequest
       : null;
@@ -10906,6 +10953,9 @@
   }
 
   function queueOpen(message) {
+    if (state.readerStateReady) saveReaderStateNow();
+    state.readerStateReady = false;
+    state.pendingReaderState = null;
     if (state.disposed) {
       return;
     }
@@ -11612,6 +11662,12 @@
       return;
     }
 
+    if (message.type === 'reader-state-restore') {
+      if (message.documentId !== state.activeDocumentId || message.openRequest !== state.activeOpenRequest) return;
+      state.pendingReaderState = {state:message.state,restorePosition:message.restorePosition};
+      void restorePendingReaderState();
+      return;
+    }
     if (message.type === "open") {
       if (
         typeof message.documentId !== "string" ||
@@ -12231,6 +12287,10 @@
         }
         clearTimeout(state.startupTimer);
         state.eventAbortController = new AbortController();
+        for (const name of ['pagechanging','scalechanging','rotationchanging','scrollmodechanged','spreadmodechanged','annotationeditormodechanged']) {
+          app.eventBus?._on(name, scheduleReaderStateSave, {signal:state.eventAbortController.signal});
+        }
+        document.getElementById('viewerContainer')?.addEventListener('scroll', scheduleReaderStateSave, {passive:true,signal:state.eventAbortController.signal});
         window.addEventListener("copy", (event) => {
           const text = selectedPdfText();
           if (text === null || !event.clipboardData) return;
@@ -12589,6 +12649,7 @@
   }
 
   function dispose() {
+    saveReaderStateNow();
     runtimeLogClose();
     if (state.disposed) {
       return;

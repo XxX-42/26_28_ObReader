@@ -107,6 +107,27 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
   }
   function stateRows(value){return [...value.annotations.map(value=>({type:'annotation',value})),...value.tombstones.map(value=>({type:'deletion',value})),...value.deletionGuards.map(value=>({type:'deletionGuard',value}))].sort((a,b)=>a.value.uuid<b.value.uuid?-1:a.value.uuid>b.value.uuid?1:0);}
   async function readCurrent(sourcePath,pairId){const path=(await resolvePaths(sourcePath)).current,text=await raw(path);return text===null?null:currentFrom(text,sourcePath,pairId);}
+  async function saveReaderState({sourcePath,pairId,deviceId:readerDeviceId,state}){
+    validatePairId(pairId);
+    if(typeof readerDeviceId!=='string'||!readerDeviceId||readerDeviceId.length>128||['__proto__','prototype','constructor'].includes(readerDeviceId))throw error('V15_READER_STATE_INVALID','Invalid reader device identity.');
+    if(!state||typeof state!=='object'||Array.isArray(state))throw error('V15_READER_STATE_INVALID','Invalid reader state.');
+    const saved=clone(state);
+    if(canonicalJson(saved).length>16384)throw error('V15_READER_STATE_INVALID','Reader state exceeds the size limit.');
+    const paths=await resolvePaths(sourcePath);
+    return queued(paths.current,async()=>{
+      const beforeText=await raw(paths.current);
+      if(beforeText===null)throw error('V15_DOCUMENT_MISSING','Initialize a paired document before saving reader state.');
+      const before=currentFrom(beforeText,sourcePath,pairId);
+      const states=before.header.readerStates||{};
+      if(!states||typeof states!=='object'||Array.isArray(states))throw error('V15_FILE_INVALID','Invalid reader state map.');
+      if(Object.hasOwn(states,readerDeviceId)&&canonicalJson(states[readerDeviceId])===canonicalJson(saved))return false;
+      const {integrity,...header}=before.header;
+      const next=encode({...header,readerStates:{...states,[readerDeviceId]:saved}},stateRows(before));
+      currentFrom(next,sourcePath,pairId);
+      await publish(paths.current,next,beforeText);
+      return true;
+    });
+  }
   function parseHistory(text,current){
     if(text===null)throw error('V15_HISTORY_MISSING','The recent-change file is missing; current annotations remain available.');
     const {header,rows}=decode(text,HISTORY,current.pairId);
@@ -244,6 +265,6 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
       return currentFrom(next,toPath,pairId);
     }));
   }
-  return Object.freeze({pathsFor,bindPath,initialize,readCurrent,readHistory,save,updateSourceIdentity,renameDocument,sourceProtocol:FORMAT});
+  return Object.freeze({pathsFor,bindPath,initialize,readCurrent,readHistory,save,saveReaderState,updateSourceIdentity,renameDocument,sourceProtocol:FORMAT});
 }
 module.exports={createSingleJsonlStore,FORMAT};
