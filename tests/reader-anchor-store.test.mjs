@@ -485,3 +485,23 @@ test('migration retains old anchors and all annotation bytes when publication fa
  const store=createReaderAnchorStore({adapter,hash,makeId:()=> 'other-id',currentStore:core});await assert.rejects(store.migrateDocument(document.docKey),/disk failure/);
  assert.equal(await adapter.read(path),before);assert.equal(await adapter.exists(legacy.pathFor(document.docKey,'retained-anchor')),true);
 });
+
+test('first selection establishes JSONL and never creates a standalone anchor, including concurrent requests',async()=>{
+ const {createSingleJsonlAnnotationStore}=require('../plugin/storage/single-jsonl-annotation-store.cjs');
+ const adapter=new MemoryAdapter();adapter.remove=async p=>adapter.files.delete(p);adapter.process=async(p,fn)=>adapter.files.set(p,fn(await adapter.read(p)));
+ let sequence=0,pairs=0;const pairId='56'.repeat(16);const store=require('../plugin/storage/single-jsonl-store.cjs').createSingleJsonlStore({adapter,token:()=>`first-${++sequence}`});
+ const document={docKey:anchorFixture.docKey,documentId:anchorFixture.documentId,sourcePath:'new.pdf',source:{sourceHash:anchorFixture.sourceHash}};
+ const registry=require('../plugin/storage/single-jsonl-registry.cjs').createSingleJsonlRegistry({adapter,store});
+ const anchors=createReaderAnchorStore({adapter,hash,makeId:()=>`anchor-${++sequence}`,currentStore:store,ensureDocument:async()=>{pairs++;await store.initialize({document,pairId});await registry.remember(await store.readCurrent(document.sourcePath));}});
+ const results=await Promise.all(['first-anchor','second-anchor'].map(anchorId=>anchors.create({...anchorFixture,anchorId})));
+ assert.equal(pairs,1);assert.equal((await store.readCurrent(document.sourcePath)).selectionAnchors.length,2);
+ assert.equal([...adapter.files.keys()].some(p=>p.includes('/anchors/')),false);
+ for(const a of results)assert.equal((await anchors.findById(a.anchorId)).exactQuote,anchorFixture.exactQuote);
+ const failed=createReaderAnchorStore({adapter:new MemoryAdapter(),hash,makeId:()=> 'failed-anchor',currentStore:store,ensureDocument:async()=>{throw Error('pairing failed')}});
+ await assert.rejects(failed.create({...anchorFixture,anchorId:'failed-anchor'}),/pairing failed/);
+});
+
+test('inline mode without a document never silently falls back to standalone files',async()=>{
+ const adapter=new MemoryAdapter(),store={};const anchors=createReaderAnchorStore({adapter,hash,makeId:()=> 'unpaired-anchor',currentStore:store});
+ await assert.rejects(anchors.create(anchorFixture),{code:'READER_ANCHOR_DOCUMENT_MISSING'});assert.equal(adapter.files.size,0);
+});

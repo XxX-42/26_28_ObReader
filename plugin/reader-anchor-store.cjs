@@ -108,7 +108,7 @@ function validateSelectionAnchor(value) {
   return value;
 }
 
-function createReaderAnchorStore({ adapter, hash, makeId, currentStore = null, root = ROOT } = {}) {
+function createReaderAnchorStore({ adapter, hash, makeId, currentStore = null, ensureDocument = null, root = ROOT } = {}) {
   if (!adapter || !["exists", "read", "write", "rename", "mkdir", "list"].every((method) => typeof adapter[method] === "function")) {
     throw new TypeError("Reader Anchor Store requires the cross-platform Obsidian DataAdapter API.");
   }
@@ -139,6 +139,18 @@ function createReaderAnchorStore({ adapter, hash, makeId, currentStore = null, r
     return `${directoryFor(docKey)}/${anchorId}.json`;
   }
 
+  const documentSetupJobs = new Map();
+  async function ensureInlineDocument(input) {
+    if (!ensureDocument) return;
+    const key = `${input.docKey}:${input.documentId}`;
+    let job = documentSetupJobs.get(key);
+    if (!job) {
+      job = Promise.resolve().then(() => ensureDocument(input));
+      documentSetupJobs.set(key, job);
+    }
+    try { await job; }
+    finally { if (documentSetupJobs.get(key) === job) documentSetupJobs.delete(key); }
+  }
   async function inlineDocuments(docKey=null){
     if(!currentStore)return [];
     const registryPath=`${root.slice(0,root.lastIndexOf('/'))}/_registry.json`;
@@ -163,7 +175,14 @@ function createReaderAnchorStore({ adapter, hash, makeId, currentStore = null, r
   }
   async function migrateDocument(docKey){
     if(!currentStore)throw codedError('READER_ANCHOR_BACKEND_REQUIRED','Inline anchor storage is not configured.');
-    const docs=await inlineDocuments(docKey);
+    let docs=await inlineDocuments(docKey);
+    if(!docs.length&&ensureDocument){
+      const listing=await adapter.list(directoryFor(docKey));
+      const first=(listing.files||[]).find(p=>p.endsWith('.json'));
+      if(first){const value=validateSelectionAnchor(await verify(JSON.parse(await adapter.read(first)),hash));
+        if(value.docKey!==docKey)throw codedError('READER_ANCHOR_IDENTITY_MISMATCH','Legacy anchor belongs to another document.');
+        await ensureInlineDocument(value);docs=await inlineDocuments(docKey);}
+    }
     if(docs.length!==1)throw codedError('READER_ANCHOR_DOCUMENT_MISSING','Exactly one verified annotation JSONL is required.');
     const directory=directoryFor(docKey),files=await adapter.exists(directory)?(await adapter.list(directory)).files:[];
     const anchors=[],originals=[];
@@ -186,14 +205,14 @@ function createReaderAnchorStore({ adapter, hash, makeId, currentStore = null, r
     const unsigned = validateSelectionAnchor({ ...input, anchorId, schemaVersion: 1, kind: "obreader-selection-anchor" });
     const target = pathFor(unsigned.docKey, anchorId);
     if(currentStore){
-      const docs=await inlineDocuments(unsigned.docKey);
+      let docs=await inlineDocuments(unsigned.docKey);
+      if(!docs.length&&ensureDocument){await ensureInlineDocument(unsigned);docs=await inlineDocuments(unsigned.docKey);}
+      if(!docs.length)throw codedError('READER_ANCHOR_DOCUMENT_MISSING','无法建立本书的批注 JSONL；未创建独立定位文件。');
       if(docs.length>1)throw codedError('READER_ANCHOR_DOCUMENT_MISSING','Multiple annotation routes.');
-      if(docs.length===1){
       if(await inlineGet(unsigned.docKey,anchorId)||await adapter.exists(target))throw codedError('READER_ANCHOR_ID_COLLISION','Anchor ID already exists.');
       const sealed=await seal(unsigned,hash),doc=docs[0];
       await currentStore.saveSelectionAnchors({sourcePath:doc.document.sourcePath,pairId:doc.pairId,anchors:[sealed]});
       return sealed;
-      }
     }
     if (await adapter.exists(target)) throw codedError("READER_ANCHOR_ID_COLLISION", "The immutable Anchor ID is already in use.");
     await ensureDirectory(directoryFor(unsigned.docKey));

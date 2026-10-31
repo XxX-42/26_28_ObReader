@@ -4627,6 +4627,12 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     });
     this.readerAnchorStore = createReaderAnchorStore({
       currentStore: this.annotationHost.store.core,
+      ensureDocument: async ({ docKey, documentId }) => {
+        const store = this.annotationHost.store;
+        const document = await store.documentForIdentity({ docKey, documentId });
+        if (!document || document.sourceMismatch) throw new Error("选区所属 PDF 的来源身份无法验证。");
+        await store.appendOperations({ document, operations: [], sourceHash: document.source?.sourceHash });
+      },
       adapter: this.app.vault.adapter,
       hash: (bytes) => this.pdfHashRuntime.fingerprint(bytes),
       makeId: makeToken,
