@@ -92,7 +92,7 @@ try {
   await wait(`return !!document.querySelector('.pdfReaderRectangleEmbed img');`,'real Markdown embed');
   report.firstEmbedMs=await evaluate(`return await app.__regionNative.firstEmbedTiming;`);
   report.firstEmbedProfile=await evaluate(`const r=app.__regionNative;r.restoreProfile.splice(0).reverse().forEach(f=>f());return r.firstProfile;`);
-  report.embed=await evaluate(`const img=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(img=>img.getBoundingClientRect().width>0);await img.decode();return {width:img.naturalWidth,height:img.naturalHeight,alt:img.alt};`);
+  report.embed=await evaluate(`const img=[...document.querySelectorAll('.pdfReaderRectangleEmbed img')].find(img=>img.getBoundingClientRect().width>0);await img.decode();const blob=await (await fetch(img.src)).blob();return {width:img.naturalWidth,height:img.naturalHeight,alt:img.alt,encodedBytes:blob.size,rawRgbaBytes:img.naturalWidth*img.naturalHeight*4};`);
   assert.ok(report.embed.width>0&&report.embed.height>0);
   report.warmReopenMs=[];
   for(let i=0;i<5;i++) {
