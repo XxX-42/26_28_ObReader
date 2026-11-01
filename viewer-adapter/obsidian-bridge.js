@@ -2502,6 +2502,35 @@
     let backgroundPreparing = false;
     let listNeedsRender = true;
     const backgroundFailedPages = new Set();
+    const dragPrepared = new Map();
+    let dragPrepareTimer = null;
+    const dragRequestIds = new Set();
+
+    function prepareDragItems() {
+      if (dragPrepareTimer !== null) clearTimeout(dragPrepareTimer);
+      dragPrepareTimer = setTimeout(() => {
+        dragPrepareTimer = null;
+        if (!open) return;
+        const requested = visibleItems.map(item => ({ annotationUuid: item.uuid, pageIndex: item.pageIndex,
+          text: annotationSentenceMarkdown(item) })).filter(item => item.text && item.text.length <= 1048576);
+        if (!requested.length) return;
+        dragRequestIds.clear();
+        let batch = [], size = 0;
+        const send = () => {
+          if (!batch.length) return;
+          const requestId = makeSyncUuid();
+          dragRequestIds.add(requestId);
+          postToHost("annotation-sidebar-drag-prepare", { documentId: state.activeDocumentId,
+            openRequest: state.activeOpenRequest, requestId, items: batch });
+          batch = []; size = 0;
+        };
+        for (const item of requested) {
+          if (batch.length >= 200 || (batch.length && size + item.text.length > 524288)) send();
+          batch.push(item); size += item.text.length;
+        }
+        send();
+      }, 150);
+    }
 
     function updateSidebarCounts() {
       const sentenceCount = visibleItems.filter(item => typeof item.targetText === "string" && item.targetText.trim()).length;
@@ -2661,6 +2690,7 @@
       for (const item of visibleItems) {
         const row = document.createElement("li");
         row.className = "sidebarComment";
+        row.draggable = true;
         row.setAttribute("role", "group");
         row.dataset.uuid = item.uuid;
         row.dataset.pageIndex = String(item.pageIndex);
@@ -2737,6 +2767,7 @@
       updateSidebarCounts();
       setSelected(selectedUuid);
       updateSelectionBar();
+      prepareDragItems();
       void prepareSidebarTextPages();
     }
 
@@ -2760,11 +2791,14 @@
       syncDock();
       button.setAttribute("aria-expanded", "true");
       if (listNeedsRender) scheduleRender({ reloadTargets: true });
+      else prepareDragItems();
       return true;
     }
 
     function close() {
       open = false;
+      if (dragPrepareTimer !== null) clearTimeout(dragPrepareTimer);
+      dragPrepareTimer = null; dragRequestIds.clear(); dragPrepared.clear();
       dockDrag = null;
       menu.style.transform = "";
       menu.classList.remove("pdfReaderAnnotationDragging");
@@ -2844,6 +2878,20 @@
         annotationUuid: item.uuid, pageIndex: item.pageIndex, text: markdown });
     }
 
+    function onListDragStart(event) {
+      const row = event.target?.closest?.("li.sidebarComment");
+      const item = visibleItems.find(candidate => candidate.uuid === row?.dataset?.uuid);
+      const prepared = item && dragPrepared.get(item.uuid);
+      if (!event.dataTransfer || !prepared || prepared.pageIndex !== item.pageIndex ||
+          prepared.sourceText !== annotationSentenceMarkdown(item)) {
+        event.preventDefault();
+        showStatus("批注内容正在准备，请稍后拖动。");
+        return;
+      }
+      event.dataTransfer.setData("text/plain", prepared.output);
+      event.dataTransfer.effectAllowed = "copy";
+    }
+
     function onListContextMenu(event) {
       const row = event.target?.closest?.("li.sidebarComment");
       if (!row || !list.contains(row) || !open) return;
@@ -2904,6 +2952,7 @@
     button.addEventListener("click", onButtonClick);
     closeButton.addEventListener("click", onCloseClick);
     list.addEventListener("click", onListClick);
+    list.addEventListener("dragstart", onListDragStart);
     list.addEventListener("contextmenu", onListContextMenu);
     list.addEventListener("keydown", onListKeyDown);
     searchInput?.addEventListener("input", onSearchInput);
@@ -2923,6 +2972,11 @@
       close,
       closeAndClear,
       refreshIfOpen,
+      setDragPrepared(message) {
+        if (!open || !dragRequestIds.delete(message.requestId) || !Array.isArray(message.items)) return;
+        for (const item of message.items) if (typeof item?.uuid === "string" && typeof item.output === "string" && typeof item.sourceText === "string") dragPrepared.set(item.uuid, item);
+      },
+      invalidateDragPrepared() { dragPrepared.clear(); dragRequestIds.clear(); if (open) prepareDragItems(); },
       isOpen: () => open,
       captureState: () => ({open,docked,side:dockSide,width:parseFloat(document.documentElement.style.getPropertyValue('--pdf-reader-annotation-sidebar-width')) || 360,scrollTop:list.parentElement?.scrollTop || 0}),
       restoreState(value) {
@@ -2955,6 +3009,7 @@
         button.removeEventListener("click", onButtonClick);
         closeButton.removeEventListener("click", onCloseClick);
         list.removeEventListener("click", onListClick);
+        list.removeEventListener("dragstart", onListDragStart);
         list.removeEventListener("contextmenu", onListContextMenu);
         list.removeEventListener("keydown", onListKeyDown);
         searchInput?.removeEventListener("input", onSearchInput);
@@ -12182,6 +12237,12 @@
       return;
     }
 
+    if (message.type === "annotation-sidebar-drag-prepared" || message.type === "annotation-sidebar-drag-invalidate") {
+      if (message.rendererGeneration !== rendererGeneration || message.documentId !== state.activeDocumentId || message.openRequest !== state.activeOpenRequest) return;
+      if (message.type === "annotation-sidebar-drag-prepared") state.annotationSidebarController?.setDragPrepared(message);
+      else state.annotationSidebarController?.invalidateDragPrepared();
+      return;
+    }
     if (message.type === "reader-anchor-occurrence-result") {
       if (message.rendererGeneration !== rendererGeneration ||
           message.documentId !== state.activeDocumentId ||

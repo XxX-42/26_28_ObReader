@@ -1278,6 +1278,8 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
               formatSelectionCopy(sample, { ...this.plugin.settings, selectionCopyTemplate: value });
               this.plugin.settings.annotationCardCopyTemplate = value;
               await this.plugin.saveSettings();
+              for (const view of this.plugin.views) view.postToViewer({ channel: CHANNEL, token: view.token,
+                type: "annotation-sidebar-drag-invalidate", documentId: view.documentId, openRequest: view.openRequest });
             } catch (error) { new Notice(error.message || "复制模板无效。", 5000); }
           });
         input.inputEl.rows = 3;
@@ -3832,6 +3834,19 @@ class PdfReaderView extends EditableFileView {
       });
       return;
     }
+    if (message.type === "annotation-sidebar-drag-prepare") {
+      if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
+          message.openRequest !== this.openRequest || !this.annotationHydrationAllowed ||
+          typeof message.requestId !== "string" || message.requestId.length > 128 ||
+          !Array.isArray(message.items) || message.items.length > 500 || message.items.some(item =>
+            !item || typeof item.annotationUuid !== "string" || item.annotationUuid.length > 512 ||
+            !Number.isSafeInteger(item.pageIndex) || item.pageIndex < 0 ||
+            typeof item.text !== "string" || item.text.length > 1048576) ||
+          message.items.reduce((sum, item) => sum + item.text.length, 0) > 1048576 + 524288) return;
+      void this.plugin.prepareAnnotationSidebarDrag(this, message).catch(error =>
+        this.plugin.sessionLog?.record("annotationSidebar", { event: "drag-prepare-failed", message: error.message }));
+      return;
+    }
     if (message.type === "annotation-sidebar-copy-request") {
       if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
           message.openRequest !== this.openRequest || !this.annotationHydrationAllowed ||
@@ -6186,6 +6201,40 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return true;
   }
 
+  formatAnnotationSidebarItem(view, document, row, text) {
+    const path = view.documentFile?.path || view.file?.path;
+    if (!path) throw new Error("当前 PDF 路径不可用。");
+    const fragment = encodeReaderLinkFragment({ pageNumber: row.pageIndex + 1,
+      docKey: document.docKey, documentId: document.documentId,
+      target: { kind: "annotation", id: row.uuid }, includeIdentity: true });
+    return formatSelectionCopy({ path, page: row.pageIndex + 1,
+      pageCount: view.annotationPageIdentity?.pageCount, text,
+      linktext: `${path.replaceAll("#", "%23").replaceAll("|", "\\|")}#${fragment}`,
+      anchorId: row.uuid, docKey: document.docKey, documentId: document.documentId },
+      { ...this.settings, selectionCopyTemplate: this.settings.annotationCardCopyTemplate ?? "{{text}}[[{{link}}|p{{page}}]]" });
+  }
+
+  async prepareAnnotationSidebarDrag(view, message) {
+    const identity = { documentId: view.documentId, openRequest: view.openRequest, rendererGeneration: view.rendererGeneration };
+    const current = () => view.isCurrentReaderAnchorIdentity(identity);
+    const document = view.annotationDocument;
+    if (!document || !current() || view.annotationSourceMismatch) return;
+    const snapshot = await this.annotationHost.store.readDocument(document, { readOnly: true });
+    if (!current()) return;
+    const rows = Array.isArray(snapshot?.annotations) ? snapshot.annotations : Object.values(snapshot?.annotations || {});
+    const byId = new Map(rows.filter(row => !row.deleted).map(row => [row.uuid, row]));
+    const deleted = new Set([...(snapshot.tombstones || []), ...(snapshot.deletionGuards || [])].map(row => row.uuid));
+    const items = [];
+    for (const item of message.items) {
+      const row = byId.get(item.annotationUuid);
+      if (!row || deleted.has(item.annotationUuid) || row.pageIndex !== item.pageIndex) continue;
+      items.push({ uuid: row.uuid, pageIndex: row.pageIndex, sourceText: item.text,
+        output: this.formatAnnotationSidebarItem(view, document, row, item.text) });
+    }
+    if (current()) view.postToViewer({ channel: CHANNEL, token: view.token, type: "annotation-sidebar-drag-prepared",
+      documentId: view.documentId, openRequest: view.openRequest, requestId: message.requestId, items });
+  }
+
   async copyAnnotationSidebarItem(view, message) {
     const identity = { documentId: view.documentId, openRequest: view.openRequest, rendererGeneration: view.rendererGeneration };
     const current = () => view.isCurrentReaderAnchorIdentity(identity) && view.annotationSidebarCopyRequestId === message.requestId;
@@ -6197,16 +6246,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     const row = rows.find(item => item.uuid === message.annotationUuid && item.pageIndex === message.pageIndex && item.deleted !== true);
     if (!row || [...(snapshot.tombstones || []), ...(snapshot.deletionGuards || [])].some(item => item.uuid === message.annotationUuid))
       throw new Error("批注尚未保存或已删除，无法复制链接。");
-    const path = view.documentFile?.path || view.file?.path;
-    if (!path) throw new Error("当前 PDF 路径不可用。");
-    const fragment = encodeReaderLinkFragment({ pageNumber: row.pageIndex + 1,
-      docKey: document.docKey, documentId: document.documentId,
-      target: { kind: "annotation", id: row.uuid }, includeIdentity: true });
-    const output = formatSelectionCopy({ path, page: row.pageIndex + 1,
-      pageCount: view.annotationPageIdentity?.pageCount, text: message.text,
-      linktext: `${path.replaceAll("#", "%23").replaceAll("|", "\\|")}#${fragment}`,
-      anchorId: row.uuid, docKey: document.docKey, documentId: document.documentId },
-      { ...this.settings, selectionCopyTemplate: this.settings.annotationCardCopyTemplate ?? "{{text}}[[{{link}}|p{{page}}]]" });
+    const output = this.formatAnnotationSidebarItem(view, document, row, message.text);
     const work = (this.autoCopyClipboardQueue || Promise.resolve()).catch(() => {}).then(async () => {
       if (current()) await this.copyReaderText(output);
     });

@@ -19,3 +19,15 @@ test('card default template preserves annotated HTML and links to the annotation
  assert.equal(formatSelectionCopy(context,{selectionCopyTemplate:'{{text}}[[{{link}}|p{{page}}]]'}),`${text}[[书.pdf#page=30&obreader=ann.uuid|p30]]`);
  assert.equal(formatSelectionCopy(context,{selectionCopyTemplate:'{{link}} / {{text}}'}),`书.pdf#page=30&obreader=ann.uuid / ${text}`);
 });
+
+test('drag uses prepared markdown only for the current exact sentence and copies rather than moves',async()=>{
+ const source=await readFile(new URL('../viewer-adapter/obsidian-bridge.js',import.meta.url),'utf8');
+ const start=source.indexOf('    function onListDragStart('),end=source.indexOf('\n    function onListContextMenu(',start);
+ const code=source.slice(start,end),item={uuid:'u1',pageIndex:2,displayText:'原文',targetText:'原文'};
+ const prepare=new Map([['u1',{pageIndex:2,sourceText:'original',output:'原文[[书.pdf#page=3|p3]]'}]]);
+ const fn=new Function('visibleItems','dragPrepared','annotationSentenceMarkdown','showStatus',`${code};return onListDragStart`)([item],prepare,()=> 'original',()=>{});
+ const sent={},dataTransfer={setData:(type,value)=>sent[type]=value};let blocked=false;
+ fn({target:{closest:()=>({dataset:{uuid:'u1'}})},dataTransfer,preventDefault:()=>{blocked=true}});
+ assert.equal(blocked,false);assert.equal(sent['text/plain'],'原文[[书.pdf#page=3|p3]]');assert.equal(dataTransfer.effectAllowed,'copy');
+ item.pageIndex=3;fn({target:{closest:()=>({dataset:{uuid:'u1'}})},dataTransfer,preventDefault:()=>{blocked=true}});assert.equal(blocked,true);
+});
