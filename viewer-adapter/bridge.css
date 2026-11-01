@@ -1161,6 +1161,8 @@ html.pdf-reader-chord-pan #viewerContainer * { cursor: grabbing !important; user
 .pdfReaderAnnotationRowHeader { display: flex; align-items: center; gap: 6px; min-height: 24px; width: 100%; min-width: 0; }
 #editorCommentsSidebar #editorCommentsSidebarListContainer #editorCommentsSidebarList .pdfReaderAnnotationPagePill { flex: 0 0 auto !important; box-sizing: border-box; height: 24px; display: inline-flex; align-items: center; width: max-content !important; min-width: 0 !important; margin: 0; padding: 2px 9px; border-radius: 999px; background: #427db52b; color: #27639b; font: inherit; font-size: 12px; line-height: 20px; }
 .pdfReaderAnnotationPagePill::before, .pdfReaderAnnotationPagePill::after { display: none !important; }
+/* 暂时隐藏页码、加入复习和批注类型；保留现有控件与逻辑。 */
+#editorCommentsSidebar #editorCommentsSidebarList .pdfReaderAnnotationRowHeader { display: none !important; }
 #editorCommentsSidebar #editorCommentsSidebarListContainer #editorCommentsSidebarList .pdfReaderAnnotationReviewButton { flex: none; box-sizing: border-box; height: 24px; align-self: auto; margin: 0; padding: 2px 9px; border-radius: 999px; border: 0; background: #3b956d26; color: #23754f; font-size: 12px; line-height: 20px; }
 .pdfReaderAnnotationKind { margin-inline-start: auto; opacity: .55; font-size: 11px; }
 .pdfReaderAnnotationSidebarNavigate { flex: none; width: 100%; padding: 0; }

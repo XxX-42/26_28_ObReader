@@ -466,14 +466,14 @@
     return glyphs;
   }
 
-  function recoverHighlightTextFromTextLayer(textLayer, pageRoot, viewport, rawQuadPoints) {
+  function recoverHighlightTextFromTextLayer(textLayer, pageRoot, viewport, rawQuadPoints, cachedPage = null) {
     const quadPoints = ArrayBuffer.isView(rawQuadPoints)
       ? Array.from(rawQuadPoints)
       : Array.isArray(rawQuadPoints) ? rawQuadPoints
         : Array.isArray(rawQuadPoints?.values) ? rawQuadPoints.values : null;
-    if (!textLayer || !pageRoot || !viewport || !quadPoints || quadPoints.length < 8 ||
+    if ((!cachedPage && (!textLayer || !pageRoot)) || !viewport || !quadPoints || quadPoints.length < 8 ||
         quadPoints.length % 8 !== 0) return null;
-    const pageRect = pageRoot.getBoundingClientRect?.();
+    const pageRect = cachedPage?.bounds || pageRoot?.getBoundingClientRect?.();
     if (!pageRect?.width || !pageRect?.height || !viewport.width || !viewport.height) return null;
     const scaleX = pageRect.width / viewport.width;
     const scaleY = pageRect.height / viewport.height;
@@ -498,7 +498,7 @@
       if (!(right > left && bottom > top)) return null;
       quads.push({ left, right, top, bottom });
     }
-    const glyphs = annotationSidebarTextGlyphs(textLayer, pageRoot, viewport);
+    const glyphs = cachedPage?.glyphs || annotationSidebarTextGlyphs(textLayer, pageRoot, viewport);
     if (!glyphs?.length) return null;
     const textRects = glyphs.map(glyph => glyph.rects);
     const lines = [];
@@ -585,8 +585,10 @@
     const pageView = state.app?.pdfViewer?.getPageView?.(pageIndex);
     const pageRoot = pageElementForIndex(pageIndex);
     const textLayer = textLayerForPage(pageRoot);
-    return recoverHighlightTextFromTextLayer(textLayer, pageRoot, pageView?.viewport,
-      editorPayload.quadPoints);
+    const cached = state.annotationSidebarOffscreenPages?.get(pageIndex);
+    const live = textLayer && pageRoot?.getBoundingClientRect?.().width && pageView?.viewport;
+    return recoverHighlightTextFromTextLayer(textLayer, pageRoot, live ? pageView.viewport : cached?.viewport,
+      editorPayload.quadPoints, live ? null : cached);
   }
 
   function readerPageNumberForRoot(pageRoot) {
@@ -2134,7 +2136,7 @@
     for (const [runtimeId, uuid] of state.annotationUuidByRuntimeId || []) {
       if (typeof uuid !== "string" || !uuid) continue;
       const editor = manager.getEditor?.(runtimeId);
-      if (normalizeSyncKind(editor?.editorType) !== "Highlight") continue;
+      if (!["Highlight", "Underline"].includes(normalizeSyncKind(editor?.editorType))) continue;
       // Accessibility labels can become localized editor role descriptions
       // after hydration. Only the exact selection capture is live quote evidence.
       const text = state.annotationTargetTextByRuntimeId?.get(runtimeId);
@@ -2171,7 +2173,7 @@
         evidence.set(row.uuid, { text: payload.value, source: "stored" });
         continue;
       }
-      if (kind !== "Highlight" || evidence.has(row.uuid)) continue;
+      if ((kind !== "Highlight" && kind !== "Underline") || evidence.has(row.uuid)) continue;
       if (typeof payload?.text === "string" && payload.text.trim()) {
         evidence.set(row.uuid, { text: payload.text, source: "stored" });
         continue;
@@ -2520,7 +2522,7 @@
       try {
         while (generation === backgroundGeneration && guard() && state.app?.pdfDocument === pdf) {
           const pageIndex = items.find((item) => {
-            if (item.kind !== "Square" && item.kind !== "Highlight") return false;
+            if (item.kind !== "Square" && item.kind !== "Highlight" && item.kind !== "Underline") return false;
             if (state.annotationSidebarOffscreenPages.has(item.pageIndex) || backgroundFailedPages.has(item.pageIndex)) return false;
             return true;
           })?.pageIndex;
