@@ -2348,7 +2348,7 @@
 
   function annotationSentenceMarkdown(item) {
     const escape = value => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;");
-    if (!item?.targetText || item.targetTextSource === "unavailable") return "";
+    if (!item || (!item.sentenceChars?.length && (!item.targetText || item.targetTextSource === "unavailable"))) return "";
     if (!Array.isArray(item.sentenceChars)) return escape(item.displayText || item.targetText);
     const groups = [];
     for (const part of item.sentenceChars) {

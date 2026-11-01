@@ -7,3 +7,7 @@ test('copy text preserves distinct highlight and rectangle colors and escapes HT
  assert.equal(render(item),'原<mark style="background-color: rgb(254, 240, 138);">&lt;&amp;</mark><span style="border: 2px solid #ff0000; padding: 0px 1.2px;">框</span>');
 });
 test('copy rejects unavailable text and unsafe color',()=>{assert.equal(render({targetTextSource:'unavailable'}),'');assert.equal(render({targetText:'x',sentenceChars:[{character:'x',owner:0}],sentenceStyles:[{kind:'Square',color:'red; display:none'}]}),'<span style="border: 2px solid #d33b30; padding: 0px 1.2px;">x</span>')});
+test('copies recovered sentence even if the original rectangle has no stored target text',()=>{
+ const item={targetText:null,targetTextSource:'unavailable',displayText:'一般而言，出现前',sentenceChars:[{character:'一',owner:null},{character:'般',owner:null},{character:'出',owner:0},{character:'现',owner:0}],sentenceStyles:[{kind:'Square',color:'#f00'}]};
+ assert.equal(render(item),'一般<span style="border: 2px solid #f00; padding: 0px 1.2px;">出现</span>');
+});
