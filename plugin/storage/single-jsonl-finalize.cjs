@@ -56,7 +56,7 @@ function verifyMigratedState({document,snapshot,current,history=[],deferred}){
   return {exact,advanced,active:current.annotations.length,deleted:current.tombstones.length,deferred:false};
 }
 
-function createSingleJsonlFinalizer({adapter,store,registry,deferred,readLegacy,verifyPair,verifyLegacyFile,hash,root='00_Archive/20_PDFData'}){
+function createSingleJsonlFinalizer({adapter,store,registry,deferred,readLegacy,verifyPair,verifyLegacyFile,hash,root='00_Archive/4_PDFData'}){
   normalizeInitialPath(root);
   for(const fn of [readLegacy,verifyPair,verifyLegacyFile,hash])if(typeof fn!=='function')throw TypeError('Verified legacy, file, PDF pair and hash callbacks are required.');
   async function inventory(){

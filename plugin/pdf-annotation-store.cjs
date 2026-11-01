@@ -33,7 +33,7 @@ const { legacyReadOnlyAdapter } = require("./storage/protocol-barrier.cjs");
 
 function createPdfAnnotationStore({
   adapter,
-  root = "00_Archive/20_PDFData",
+  root = "00_Archive/4_PDFData",
   normalizePath = defaultNormalizePath,
   clock = () => Date.now(),
   uuid,

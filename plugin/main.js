@@ -60,7 +60,7 @@ function drainViewerRuntimeLog(view) {
 
 const VIEW_TYPE = "pdf-web-reader-view";
 const CHANNEL = "pdf-web-reader";
-const VOCABULARY_DICTIONARY_ROOT = "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3";
+const VOCABULARY_DICTIONARY_ROOT = "00_Archive/5_VocabularyData/dictionaries/ECDICT/resource-v3";
 const VOCABULARY_DICTIONARY_LEGACY_ROOT = VOCABULARY_DICTIONARY_ROOT.replace(/resource-v3$/u, "resource-v2");
 const VOCABULARY_DICTIONARY_MANIFEST = `${VOCABULARY_DICTIONARY_ROOT}/manifest.json`;
 const MAX_VOCABULARY_QUERY_TEXT_CHARS = 131072;
@@ -5142,7 +5142,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
   }
 
   handleReaderBacklinkAnchorFileChange(path, { deleted = false } = {}) {
-    const root = `${this.readerAnchorStore?.root || "00_Archive/20_PDFData/anchors"}/`;
+    const root = `${this.readerAnchorStore?.root || "00_Archive/4_PDFData/anchors"}/`;
     if (typeof path !== "string" || !path.startsWith(root) || !path.endsWith(".json")) return false;
     const anchorId = path.slice(path.lastIndexOf("/") + 1, -5);
     if (!/^[A-Za-z0-9_-]{8,128}$/.test(anchorId)) return false;

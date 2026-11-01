@@ -2,7 +2,7 @@
 
 const { canonicalHash, canonicalStringify, hashText } = require("./canonical.cjs");
 
-const VOCABULARY_DATA_ROOT = "00_Archive/21_VocabularyData";
+const VOCABULARY_DATA_ROOT = "00_Archive/5_VocabularyData";
 const MAX_SHARD_RECORDS = 512;
 const MAX_SHARD_BYTES = 256 * 1024;
 const HASH_PREFIX = /^[a-f0-9]{1,64}$/;
@@ -22,7 +22,7 @@ function assertStoreOptions({ storeId, root, kind, idOf, maxRecords, maxBytes })
   }
   if (typeof root !== "string" || !root.startsWith(`${VOCABULARY_DATA_ROOT}/`) ||
       root.split("/").some((part) => !part || part === "." || part === ".." || /[\\\u0000-\u001f\u007f]/.test(part))) {
-    throw codedError("VOCAB_SHARD_ROOT_INVALID", "Vocabulary shards must be stored beneath 00_Archive/21_VocabularyData/.");
+    throw codedError("VOCAB_SHARD_ROOT_INVALID", "Vocabulary shards must be stored beneath 00_Archive/5_VocabularyData/.");
   }
   if (typeof kind !== "string" || !/^[a-z][a-z0-9-]{0,63}$/.test(kind)) {
     throw codedError("VOCAB_SHARD_KIND_INVALID", "A stable vocabulary shard kind is required.");

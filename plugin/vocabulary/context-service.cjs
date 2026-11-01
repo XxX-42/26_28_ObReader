@@ -5,7 +5,7 @@ const { validateSelectionAnchor } = require("../reader-anchor-store.cjs");
 const { VOCABULARY_DATA_ROOT, createShardedStore, prepareShardedReplacement } = require("./sharded-store.cjs");
 
 const CONTEXT_STORE_ID = "vocabulary-contexts-v1";
-const CONTEXT_ROOT = "00_Archive/21_VocabularyData/contexts";
+const CONTEXT_ROOT = "00_Archive/5_VocabularyData/contexts";
 const CONTEXT_KIND = "context";
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;

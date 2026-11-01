@@ -9,7 +9,7 @@ const fail=(code,message)=>Object.assign(new Error(message),{code});
 
 // Compatibility boundary for the existing Viewer/Host snapshot and save APIs.
 // Current-state files remain the authority; this adapter does not replay WAL.
-function createSingleJsonlAnnotationStore({adapter,root='00_Archive/20_PDFData',uuid=()=>crypto.randomUUID(),deviceId='v15-local',identityHash,hash,
+function createSingleJsonlAnnotationStore({adapter,root='00_Archive/4_PDFData',uuid=()=>crypto.randomUUID(),deviceId='v15-local',identityHash,hash,
   pairDocument=null,onTiming=()=>{}}={}){
   const core=createSingleJsonlStore({adapter,root,token:uuid,deviceId});
   const registry=createSingleJsonlRegistry({adapter,store:core,root});

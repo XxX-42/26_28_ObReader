@@ -12,7 +12,7 @@ const { encodeReaderLinkFragment } = require("../reader-anchor-store.cjs");
 const { LeitnerScheduler, LEITNER_SCHEDULER_VERSION } = require("./scheduler.cjs");
 
 const LEARNING_STORE_ID = "learning-items-v1";
-const LEARNING_ROOT = "00_Archive/21_VocabularyData/learning/items";
+const LEARNING_ROOT = "00_Archive/5_VocabularyData/learning/items";
 const LEARNING_KIND = "learning-item";
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;

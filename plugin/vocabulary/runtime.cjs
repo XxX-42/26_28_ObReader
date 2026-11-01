@@ -79,7 +79,7 @@ function createVocabularyRuntime({ adapter, personalService, deviceId, sessionId
     await ready();
     if (recoveryPromise) return recoveryPromise;
     const pending = (async () => {
-      const directory = `00_Archive/21_VocabularyData/transactions/${deviceId}`;
+      const directory = `00_Archive/5_VocabularyData/transactions/${deviceId}`;
       if (!(await adapter.exists(directory))) return [];
       const listing = await adapter.list(directory);
       const recovered = [];

@@ -10,7 +10,7 @@ function safeSegment(value) {
     value !== "." && value !== ".." && !/[\\/\x00-\x1f]/.test(value);
 }
 
-function createObsidianStorageBridge({ adapter, root = "00_Archive/20_PDFData", hash, verifyHash } = {}) {
+function createObsidianStorageBridge({ adapter, root = "00_Archive/4_PDFData", hash, verifyHash } = {}) {
   if (!adapter || typeof adapter.append !== "function" || typeof adapter.read !== "function" ||
       typeof adapter.write !== "function" || typeof adapter.rename !== "function" ||
       typeof adapter.exists !== "function" || typeof adapter.mkdir !== "function") {

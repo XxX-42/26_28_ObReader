@@ -8,7 +8,7 @@ const require = createRequire(import.meta.url);
 const { canonicalStringify, hashText, canonicalHash } = require("../plugin/vocabulary/canonical.cjs");
 const { VocabularyTransactionCoordinator } = require("../plugin/vocabulary/transactions.cjs");
 
-const ROOT = "00_Archive/21_VocabularyData";
+const ROOT = "00_Archive/5_VocabularyData";
 const DEVICE = "device-local-01";
 const SESSION = "session-local-01";
 
@@ -249,8 +249,8 @@ test("a foreign pending file arriving after a local intent cannot alter local re
   }), /simulated interruption/);
   adapter.hook = null;
   const foreignDirectory = `${ROOT}/transactions/device-foreign-02/session-foreign-02`;
-  await adapter.mkdir("00_Archive/21_VocabularyData/transactions");
-  await adapter.mkdir("00_Archive/21_VocabularyData/transactions/device-foreign-02");
+  await adapter.mkdir("00_Archive/5_VocabularyData/transactions");
+  await adapter.mkdir("00_Archive/5_VocabularyData/transactions/device-foreign-02");
   await adapter.mkdir(foreignDirectory);
   const foreignPath = `${foreignDirectory}/remote.pending.json`;
   await adapter.write(foreignPath, "remote file has not fully synced");

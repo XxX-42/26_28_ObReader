@@ -5,7 +5,7 @@
 const SCHEMA = "pdf-web-reader-vocabulary";
 const LEGACY_SCHEMA_VERSION = 1;
 const SCHEMA_VERSION = 2;
-const DIRECTORY = "00_Archive/21_VocabularyData";
+const DIRECTORY = "00_Archive/5_VocabularyData";
 const SNAPSHOT_PATH = `${DIRECTORY}/en.vocab.json`;
 const BACKUP_PATH = `${SNAPSHOT_PATH}.previous`;
 const STATUSES = new Set([1, 2, 3, 4, 5]);
@@ -486,8 +486,8 @@ function normalizeReferencePreconditions(result) {
     throw new VocabularyStoreError("Reference validation must return verified store preconditions.", "vocabulary-history-reference-evidence-invalid");
   }
   const roots = new Map([
-    ["vocabulary-contexts-v1", "00_Archive/21_VocabularyData/contexts"],
-    ["vocabulary-review-v1", "00_Archive/21_VocabularyData/review/states"],
+    ["vocabulary-contexts-v1", "00_Archive/5_VocabularyData/contexts"],
+    ["vocabulary-review-v1", "00_Archive/5_VocabularyData/review/states"],
   ]);
   const normalized = new Map();
   for (const item of result.preconditions) {

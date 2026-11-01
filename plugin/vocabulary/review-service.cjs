@@ -10,7 +10,7 @@ const {
 } = require("./sharded-store.cjs");
 
 const REVIEW_STORE_ID = "vocabulary-review-v1";
-const REVIEW_ROOT = "00_Archive/21_VocabularyData/review/states";
+const REVIEW_ROOT = "00_Archive/5_VocabularyData/review/states";
 const REVIEW_KIND = "review-state";
 const REVIEW_INTERVAL_DAYS = Object.freeze([1, 3, 7, 14, 30]);
 const REVIEW_STATE_FIELDS = Object.freeze([
@@ -276,7 +276,7 @@ function createVocabularyReviewService({
         throw codedError("VOCAB_REVIEW_SESSION_ID_INVALID", "A path-safe stable Review session ID is required.");
       }
       const recovery = await transaction.recoverLocal();
-      const localSessionPrefix = "00_Archive/21_VocabularyData/transactions/" +
+      const localSessionPrefix = "00_Archive/5_VocabularyData/transactions/" +
         String(transaction.deviceId || "") + "/" + sessionId + "/";
       const relevant = (recovery.conflicts || []).filter((item) =>
         item.storeId === REVIEW_STORE_ID || item.storeId === "review-journal" || item.storeId === "review-summary" ||

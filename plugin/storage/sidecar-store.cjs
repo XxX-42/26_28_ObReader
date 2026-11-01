@@ -103,7 +103,7 @@ function mapsFromOperations(operations) {
   return { annotations, tombstones, routing: state.routing || null };
 }
 
-function createSidecarStore({ adapter, root = "00_Archive/20_PDFData", hash, verifyHash, token } = {}) {
+function createSidecarStore({ adapter, root = "00_Archive/4_PDFData", hash, verifyHash, token } = {}) {
   const baseRoot = normalizeRoot(root);
   const io = createStorageIo({ adapter, hash, verifyHash, token });
 

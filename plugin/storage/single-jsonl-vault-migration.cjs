@@ -13,7 +13,7 @@ const fail=(code,message)=>Object.assign(new Error(message),{code});
 
 // The caller must ensure that Readers are closed and synchronization is
 // paused for the entire operation. This function never creates backups.
-function createSingleJsonlVaultMigration({app,hashRuntime,identityHash,deviceId,uuid,verifyOutlineUpdate=null,root='00_Archive/20_PDFData'}){
+function createSingleJsonlVaultMigration({app,hashRuntime,identityHash,deviceId,uuid,verifyOutlineUpdate=null,root='00_Archive/4_PDFData'}){
   if(!app?.vault?.adapter||!hashRuntime?.fingerprint||typeof uuid!=='function')throw TypeError('A vault, hash runtime and UUID generator are required.');
   const adapter=app.vault.adapter;
   const common={adapter,root,deviceId,uuid,hash:hashRuntime.fingerprint,identityHash,verifyHash:hashRuntime.matches};

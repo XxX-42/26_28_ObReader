@@ -10,7 +10,7 @@ const { createSourceVersions } = require("./pdf-source-versions.cjs");
 const { prepareNativeErase, prepareNativeRestore, getNativeAnnotationIndex } = require("./pdf-native-erase.cjs");
 const { digestMigrationBytes } = require("./storage/single-jsonl-migration.cjs");
 
-const ANNOTATION_ROOT = "00_Archive/20_PDFData";
+const ANNOTATION_ROOT = "00_Archive/4_PDFData";
 const TAIL_SAMPLE_BYTES = 64 * 1024;
 
 function encodeBase64(bytes) {

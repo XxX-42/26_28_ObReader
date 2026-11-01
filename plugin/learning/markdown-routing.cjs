@@ -2,7 +2,7 @@
 
 const { canonicalStringify, hashText } = require("../vocabulary/canonical.cjs");
 
-const MARKDOWN_ROUTE_ROOT = "00_Archive/21_VocabularyData/routing/markdown";
+const MARKDOWN_ROUTE_ROOT = "00_Archive/5_VocabularyData/routing/markdown";
 const MARKDOWN_OWNER_ROOT = `${MARKDOWN_ROUTE_ROOT}/owners`;
 const MARKDOWN_BINDING_ROOT = `${MARKDOWN_ROUTE_ROOT}/bindings`;
 const MARKDOWN_PATH_ROOT = `${MARKDOWN_ROUTE_ROOT}/paths`;

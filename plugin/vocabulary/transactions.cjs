@@ -2,7 +2,7 @@
 
 const { canonicalHash, canonicalStringify, hashText } = require("./canonical.cjs");
 
-const VOCABULARY_DATA_ROOT = "00_Archive/21_VocabularyData";
+const VOCABULARY_DATA_ROOT = "00_Archive/5_VocabularyData";
 const JOURNAL_KIND = "vocabulary-review-journal-segment";
 const JOURNAL_SCHEMA_VERSION = 1;
 const JOURNAL_LINE_KIND = "vocabulary-review-journal-action";
@@ -46,7 +46,7 @@ function normalizePath(path, root = VOCABULARY_DATA_ROOT) {
   }
   const parts = path.split("/");
   for (const part of parts) assertSafeSegment(part);
-  if (parts.length <= 2 || parts[0] !== "00_Archive" || parts[1] !== "21_VocabularyData") {
+  if (parts.length <= 2 || parts[0] !== "00_Archive" || parts[1] !== "5_VocabularyData") {
     throw codedError("VOCAB_TX_PATH_INVALID", `Vocabulary transaction paths must be below ${VOCABULARY_DATA_ROOT}/.`);
   }
   return parts.join("/");

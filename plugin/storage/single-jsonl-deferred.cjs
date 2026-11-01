@@ -6,7 +6,7 @@ const fail=(code,message)=>Object.assign(new Error(message),{code});
 
 // Reuses the existing path-keyed document index only for legacy PDFs that
 // have no annotations yet. It does not allocate a pair ID or write the PDF.
-function createSingleJsonlDeferredIndex({adapter,root='00_Archive/20_PDFData'}){
+function createSingleJsonlDeferredIndex({adapter,root='00_Archive/4_PDFData'}){
   const path=`${root}/_index.json`;
   async function read(){
     if(!await adapter.exists(path))return {raw:null,value:{schemaVersion:1,documents:{}}};

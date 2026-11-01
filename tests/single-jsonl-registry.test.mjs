@@ -13,6 +13,13 @@ test('registry hit validates exactly one current file without listing directorie
  assert.equal(w.calls.filter(x=>x[0]==='list').length,0);
  assert.equal(w.calls.filter(x=>x[0]==='read').length,2);
 });
+test('renamed PDF data root resolves old registry paths without changing annotation data',async()=>{
+ const w=fixture(),id='12'.repeat(16),current=await w.init('Books/a.pdf',id);await w.registry.remember(current);
+ const path=w.store.pathsFor('Books/a.pdf').current,original=w.files.get(path);
+ const registry=JSON.parse(w.files.get(w.registry.path));registry.entries[id].jsonlPath=registry.entries[id].jsonlPath.replace('00_Archive/4_PDFData/','00_Archive/20_PDFData/');
+ w.files.set(w.registry.path,JSON.stringify(registry));
+ assert.equal((await w.registry.lookup(id)).pairId,id);assert.equal(w.files.get(path),original);
+});
 test('same named PDFs in different directories remain separate and damaged registry repairs from verified current files',async()=>{
  const w=fixture(),a='12'.repeat(16),b='34'.repeat(16);await w.init('One/a.pdf',a);await w.init('Two/a.pdf',b);
  w.files.set(w.registry.path,'{bad');

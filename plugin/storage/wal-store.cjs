@@ -140,7 +140,7 @@ function normalizeWal(value) {
 
 function createWalStore({
   adapter,
-  root = "00_Archive/20_PDFData",
+  root = "00_Archive/4_PDFData",
   hash,
   verifyHash,
   deviceId,

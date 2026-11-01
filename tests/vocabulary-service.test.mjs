@@ -352,12 +352,12 @@ test("undefined differs from KNOWN and statuses 1 through 5 persist", async () =
 });
 
 test("the canonical Vault vocabulary path is created on first write and keeps optional pronunciation", async () => {
-  assert.equal(VOCABULARY_PATH, "00_Archive/21_VocabularyData/en.vocab.json");
+  assert.equal(VOCABULARY_PATH, "00_Archive/5_VocabularyData/en.vocab.json");
   const adapter = new MemoryAdapter();
   const service = makeService(adapter);
   await service.upsertTerm("resilient", { status: 2, translation: "有韧性的", phonetic: "/rɪˈzɪliənt/" });
   assert.ok(adapter.directories.has("00_Archive"));
-  assert.ok(adapter.directories.has("00_Archive/21_VocabularyData"));
+  assert.ok(adapter.directories.has("00_Archive/5_VocabularyData"));
   assert.equal((await service.getTerm("resilient")).phonetic, "/rɪˈzɪliənt/");
   assert.equal(snapshot(adapter).records[0].phonetic, "/rɪˈzɪliənt/");
   const csv = await service.exportCsv();

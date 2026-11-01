@@ -5,7 +5,7 @@ const sha256Hex = (bytes) => Array.from(sha256(bytes), (b) => b.toString(16).pad
 const { canonicalJson } = require("./storage/canonical.cjs");
 const { createStorageIo } = require("./storage/io.cjs");
 const VERSION = "outline-incremental-v1";
-function createSourceVersions({ adapter, makeToken, root = "00_Archive/20_PDFData" }) {
+function createSourceVersions({ adapter, makeToken, root = "00_Archive/4_PDFData" }) {
   const io = createStorageIo({ adapter, hash: (bytes) => "sha256-v1:" + sha256Hex(bytes), token: makeToken });
   async function record(document, proof) {
     if (proof?.status !== "VERIFIED" || proof.verifierVersion !== VERSION || proof.beforeHash !== document.source?.sourceHash || proof.beforeSize !== document.source?.size || !/^sha256-v1:[a-f0-9]{64}$/.test(proof.afterHash) || !/^[a-f0-9]{12}$/.test(document.docKey)) throw Error("Invalid verified source version");

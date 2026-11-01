@@ -1,6 +1,6 @@
 /* Pure Web API resource decoding. No personal vocabulary or PDF state. */
-const DEFAULT_DICTIONARY_ROOT = "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3";
-const LEGACY_DICTIONARY_ROOT = "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v2";
+const DEFAULT_DICTIONARY_ROOT = "00_Archive/5_VocabularyData/dictionaries/ECDICT/resource-v3";
+const LEGACY_DICTIONARY_ROOT = "00_Archive/5_VocabularyData/dictionaries/ECDICT/resource-v2";
 const NORMALIZATION = "nfc-lower-space-v1";
 const RESOURCE_KIND = "pdf-reader-dictionary-resource";
 

@@ -6,7 +6,7 @@ const fail=(code,message)=>Object.assign(new Error(message),{code});
 
 // Rebuildable routing only. A registry hit is always checked against the paired
 // current-state file; cached routes never authorize annotation hydration.
-function createSingleJsonlRegistry({adapter,store,root='00_Archive/20_PDFData'}){
+function createSingleJsonlRegistry({adapter,store,root='00_Archive/4_PDFData'}){
   const path=`${root}/_registry.json`;
   async function read(){
     if(!await adapter.exists(path))return {raw:null,value:null};

@@ -34,7 +34,7 @@ function semantic(row){const {clock,version,deletedAt,...value}=row;return canon
 
 // This is a single-writer, current-state store. It does not promise distributed
 // merge safety when synchronization overwrites a file from another device.
-function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>globalThis.crypto.randomUUID(),clock=Date.now,deviceId='v15-local'}={}){
+function createSingleJsonlStore({adapter,root='00_Archive/4_PDFData',token=()=>globalThis.crypto.randomUUID(),clock=Date.now,deviceId='v15-local'}={}){
   for(const name of ['read','write','exists','mkdir','rename','process'])if(typeof adapter?.[name]!=='function')throw TypeError(`DataAdapter.${name} is required.`);
   normalizeInitialPath(root);
   const queues=new Map();
@@ -42,6 +42,8 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
   const routePaths=new Map();
   function pathsFor(sourcePath){const path=normalizeInitialPath(sourcePath);const stem=datedJsonlStem(path,localDateSuffix());return routePaths.get(path)||{current:`${root}/annotations/${stem}.jsonl`,history:`${root}/history/${stem}.jsonl`,registry:`${root}/_registry.json`};}
   function bindPath(sourcePath,current){
+    if(root==='00_Archive/4_PDFData' && typeof current==='string' && current.startsWith('00_Archive/20_PDFData/annotations/'))
+      current=root+current.slice('00_Archive/20_PDFData'.length);
     const source=normalizeInitialPath(sourcePath),base=`${root}/annotations/${source.slice(0,-4)}`;
     if(current!==base+'.jsonl'&&!new RegExp('^\\d{6}\\.jsonl$').test(current.slice(base.length)))throw error('V15_PATH_INVALID','Invalid dated annotation route.');
     if(!current.startsWith(base))throw error('V15_PATH_INVALID','Invalid annotation route.');

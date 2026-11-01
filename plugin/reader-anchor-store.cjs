@@ -3,7 +3,7 @@
 
 const { canonicalJson, seal, verify } = require("./storage/canonical.cjs");
 
-const ROOT = "00_Archive/20_PDFData/anchors";
+const ROOT = "00_Archive/4_PDFData/anchors";
 const DOC_KEY = /^[a-f0-9]{12}$/i;
 const ANCHOR_ID = /^[A-Za-z0-9_-]{8,128}$/;
 const SOURCE_HASH = /^(?:xxh64-v1:[a-f0-9]{16}|sha256-v1:[a-f0-9]{64})$/i;

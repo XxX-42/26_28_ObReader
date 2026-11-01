@@ -49,7 +49,7 @@ function advanceJsonlGeneration(adapter, docKey) {
   return generations.get(docKey);
 }
 
-function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root = "00_Archive/20_PDFData",
+function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root = "00_Archive/4_PDFData",
   hash, verifyHash, identityHash = hash, deviceId, uuid, onTiming = () => {}, sourceExists = (path) => adapter.exists(path),
   maintenance = { tailOperations: 256, walBytes: 512 * 1024 }, jsonlMode = false, clock = Date.now, ...legacyOptions }) {
   const stableHash = async (bytes) => {
