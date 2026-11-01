@@ -2700,7 +2700,8 @@
       }
       list.replaceChildren(fragment);
       listNeedsRender = false;
-      count.textContent = String(visibleItems.length);
+      const sentenceCount = visibleItems.filter(item => typeof item.targetText === "string" && item.targetText.trim()).length;
+      count.textContent = `${sentenceCount} 个句子`;
       setSelected(selectedUuid);
       updateSelectionBar();
       void prepareSidebarTextPages();
@@ -2759,7 +2760,7 @@
       if (searchInput) searchInput.value = "";
       if (typeFilter) typeFilter.value = "all";
       list.replaceChildren();
-      count.textContent = "0";
+      count.textContent = "0 个句子";
     }
 
     function refreshIfOpen() {
