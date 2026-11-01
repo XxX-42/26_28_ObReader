@@ -2346,6 +2346,26 @@
     });
   }
 
+  function annotationSentenceMarkdown(item) {
+    const escape = value => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;");
+    if (!item?.targetText || item.targetTextSource === "unavailable") return "";
+    if (!Array.isArray(item.sentenceChars)) return escape(item.displayText || item.targetText);
+    const groups = [];
+    for (const part of item.sentenceChars) {
+      const owner = Number.isInteger(part.owner) ? part.owner : null;
+      if (!groups.length || groups.at(-1).owner !== owner) groups.push({ owner, text: "" });
+      groups.at(-1).text += part.character;
+    }
+    return groups.map(({ owner, text }) => {
+      const escaped = escape(text), style = owner === null ? null : item.sentenceStyles?.[owner];
+      if (!style) return escaped;
+      const color = /^(?:#[\da-f]{3,8}|rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\))$/i.test(style.color || "") ? style.color : (style.kind === "Square" ? "#d33b30" : "#fff066");
+      if (style.kind === "Highlight") return `<mark style="background-color: ${color};">${escaped}</mark>`;
+      if (style.kind === "Square") return `<span style="border: 2px solid ${color}; padding: 2px 5px;">${escaped}</span>`;
+      return escaped;
+    }).join("");
+  }
+
   function buildAnnotationSidebarViewModels(targets, textEvidence = getAnnotationSidebarTargetTextEvidence(targets)) {
     const items = [...(targets?.values?.() || [])]
       .filter((row) => row && row.deleted !== true && typeof row.uuid === "string" &&
@@ -2652,7 +2672,9 @@
         const page = document.createElement("span");
         page.textContent = `p${item.pageIndex + 1}`;
         page.className = "pdfReaderAnnotationPagePill";
-        page.setAttribute("aria-label", pageLabel);
+        page.setAttribute("aria-label", `${pageLabel}，点击跳转 PDF`);
+        page.setAttribute("role", "button");
+        page.tabIndex = 0;
         const text = document.createElement("div");
         text.className = "sidebarCommentText";
         if (Array.isArray(item.sentenceChars)) {
@@ -2673,7 +2695,7 @@
         } else text.textContent = item.displayText;
         text.title = item.displayText;
         text.setAttribute("aria-label", item.displayText);
-        navigateButton.setAttribute("aria-label", `${pageLabel} · ${item.displayText}`);
+        navigateButton.setAttribute("aria-label", `复制带标记文字：${item.displayText}`);
         const header = document.createElement("div");
         header.className = "pdfReaderAnnotationRowHeader";
         if (selectionMode) {
@@ -2811,7 +2833,12 @@
       }
       const row = event.target?.closest?.("li.sidebarComment");
       if (!row || !list.contains(row)) return;
-      void activate(row, false);
+      if (event.target?.closest?.(".pdfReaderAnnotationPagePill")) { void activate(row, false); return; }
+      const item = visibleItems.find(candidate => candidate.uuid === row.dataset.uuid);
+      const markdown = annotationSentenceMarkdown(item);
+      if (!markdown) { showStatus("此批注没有可复制的文字。"); return; }
+      if (!navigator.clipboard?.writeText) { showStatus("无法访问剪贴板。"); return; }
+      void navigator.clipboard.writeText(markdown).then(() => showStatus("已复制带标记文字。"), () => showStatus("复制失败，请检查剪贴板权限。"));
     }
 
     function onListContextMenu(event) {
@@ -2837,6 +2864,10 @@
 
     function onListKeyDown(event) {
       if (event.target?.closest?.(".pdfReaderAnnotationReviewButton")) return;
+      if (event.target?.closest?.(".pdfReaderAnnotationPagePill")) {
+        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void activate(event.target.closest("li.sidebarComment"), true); }
+        return;
+      }
       const navigateButton = event.target?.closest?.(".pdfReaderAnnotationSidebarNavigate");
       if (!navigateButton) return;
       const row = event.target?.closest?.("li.sidebarComment");
@@ -2849,7 +2880,7 @@
       else if (event.key === "Enter" || event.key === " ") {
         if (row) {
           event.preventDefault();
-          void activate(row, true);
+          navigateButton.click();
         }
         return;
       } else return;
