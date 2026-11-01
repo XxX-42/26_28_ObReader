@@ -2481,6 +2481,14 @@
     let listNeedsRender = true;
     const backgroundFailedPages = new Set();
 
+    function updateSidebarCounts() {
+      const sentenceCount = visibleItems.filter(item => typeof item.targetText === "string" && item.targetText.trim()).length;
+      const annotationIds = new Set(visibleItems.flatMap(item => item.uuids || [item.uuid]));
+      count.textContent = `${sentenceCount} 个句子 · ${annotationIds.size} 个批注`;
+      count.classList?.toggle("pdfReaderSentenceLoading", backgroundPreparing);
+      count.setAttribute?.("aria-busy", String(backgroundPreparing));
+    }
+
     async function prepareSidebarTextPages() {
       if (backgroundPreparing || !state.externalSourceConfirmed || !window.pdfjsLib?.TextLayer) return;
       const pdf = state.app?.pdfDocument;
@@ -2488,6 +2496,7 @@
       const generation = backgroundGeneration;
       const guard = createSessionGuard();
       backgroundPreparing = true;
+      updateSidebarCounts();
       try {
         while (generation === backgroundGeneration && guard() && state.app?.pdfDocument === pdf) {
           const pageIndex = items.find((item) => {
@@ -2527,6 +2536,7 @@
         }
       } finally {
         backgroundPreparing = false;
+        updateSidebarCounts();
         if (generation !== backgroundGeneration && state.externalSourceConfirmed) void prepareSidebarTextPages();
       }
     }
@@ -2700,8 +2710,7 @@
       }
       list.replaceChildren(fragment);
       listNeedsRender = false;
-      const sentenceCount = visibleItems.filter(item => typeof item.targetText === "string" && item.targetText.trim()).length;
-      count.textContent = `${sentenceCount} 个句子`;
+      updateSidebarCounts();
       setSelected(selectedUuid);
       updateSelectionBar();
       void prepareSidebarTextPages();
@@ -2760,7 +2769,7 @@
       if (searchInput) searchInput.value = "";
       if (typeFilter) typeFilter.value = "all";
       list.replaceChildren();
-      count.textContent = "0 个句子";
+      count.textContent = "0 个句子 · 0 个批注";
     }
 
     function refreshIfOpen() {

@@ -1040,6 +1040,12 @@ html[data-pdf-reader-saving] #secondaryToolbarToggleButton::before {
   animation: pdf-reader-gear-spin 1s linear infinite;
 }
 @keyframes pdf-reader-gear-spin { to { transform: rotate(360deg); } }
+#editorCommentsSidebarCount.pdfReaderSentenceLoading::after {
+  content: "⚙";
+  display: inline-block;
+  margin-inline-start: 0.35em;
+  animation: pdf-reader-gear-spin 1s linear infinite;
+}
 @media (prefers-reduced-motion: reduce) {
   html[data-pdf-reader-opening] #secondaryToolbarToggleButton::before,
   html[data-pdf-reader-saving] #secondaryToolbarToggleButton::before { animation: none; }
