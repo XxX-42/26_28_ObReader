@@ -2361,7 +2361,7 @@
       if (!style) return escaped;
       const color = /^(?:#[\da-f]{3,8}|rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\))$/i.test(style.color || "") ? style.color : (style.kind === "Square" ? "#d33b30" : "#fff066");
       if (style.kind === "Highlight") return `<mark style="background-color: ${color};">${escaped}</mark>`;
-      if (style.kind === "Square") return `<span style="border: 2px solid ${color}; padding: 2px 5px;">${escaped}</span>`;
+      if (style.kind === "Square") return `<span style="border: 2px solid ${color}; padding: 0px 1.2px;">${escaped}</span>`;
       return escaped;
     }).join("");
   }
