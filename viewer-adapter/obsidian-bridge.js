@@ -2839,8 +2839,9 @@
       const item = visibleItems.find(candidate => candidate.uuid === row.dataset.uuid);
       const markdown = annotationSentenceMarkdown(item);
       if (!markdown) { showStatus("此批注没有可复制的文字。"); return; }
-      if (!navigator.clipboard?.writeText) { showStatus("无法访问剪贴板。"); return; }
-      void navigator.clipboard.writeText(markdown).then(() => showStatus("已复制带标记文字。"), () => showStatus("复制失败，请检查剪贴板权限。"));
+      postToHost("annotation-sidebar-copy-request", { documentId: state.activeDocumentId,
+        openRequest: state.activeOpenRequest, requestId: makeSyncUuid(),
+        annotationUuid: item.uuid, pageIndex: item.pageIndex, text: markdown });
     }
 
     function onListContextMenu(event) {

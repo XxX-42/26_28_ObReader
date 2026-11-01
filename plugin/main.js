@@ -1268,6 +1268,21 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
         input.inputEl.rows = 4;
         input.inputEl.style.width = "100%";
       });
+    fullWidth(new Setting(containerEl)).setName("批注卡片复制模板")
+      .setDesc("点击批注卡片时使用；{{text}} 保留颜色和矩形标记，{{link}} 为 PDF 定位地址，{{page}} 为页码。")
+      .addTextArea(input => {
+        const fallback = "{{text}}[[{{link}}|p{{page}}]]";
+        input.setValue(this.plugin.settings.annotationCardCopyTemplate ?? fallback)
+          .onChange(async value => {
+            try {
+              formatSelectionCopy(sample, { ...this.plugin.settings, selectionCopyTemplate: value });
+              this.plugin.settings.annotationCardCopyTemplate = value;
+              await this.plugin.saveSettings();
+            } catch (error) { new Notice(error.message || "复制模板无效。", 5000); }
+          });
+        input.inputEl.rows = 3;
+        input.inputEl.style.width = "100%";
+      });
     fullWidth(new Setting(containerEl)).setName("链接显示文字模板")
       .setDesc("例如 p{{pageLabel}}，或 {{file.basename}} · p.{{page}}。只影响显示文字，不改变定位目标。")
       .addTextArea(input => {
@@ -3817,6 +3832,18 @@ class PdfReaderView extends EditableFileView {
       });
       return;
     }
+    if (message.type === "annotation-sidebar-copy-request") {
+      if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
+          message.openRequest !== this.openRequest || !this.annotationHydrationAllowed ||
+          typeof message.requestId !== "string" || message.requestId.length > 128 ||
+          typeof message.annotationUuid !== "string" || message.annotationUuid.length > 512 ||
+          !Number.isSafeInteger(message.pageIndex) || message.pageIndex < 0 ||
+          typeof message.text !== "string" || !message.text.trim() || message.text.length > 1048576) return;
+      this.annotationSidebarCopyRequestId = message.requestId;
+      void this.plugin.copyAnnotationSidebarItem(this, message).catch(error =>
+        new Notice(error.message || "复制批注失败。", 6000));
+      return;
+    }
     if (message.type === "reader-anchor-occurrence-link-request" && message.output === "region-embed") {
       if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
           message.openRequest !== this.openRequest || typeof message.annotationUuid !== "string" ||
@@ -6157,6 +6184,35 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.sessionLog?.record("vocabularyContext", { event: "saved", status: result?.status || "committed",
       pageIndex: pending.capture.pageIndex, sentenceChars: pending.capture.exactQuote.length });
     return true;
+  }
+
+  async copyAnnotationSidebarItem(view, message) {
+    const identity = { documentId: view.documentId, openRequest: view.openRequest, rendererGeneration: view.rendererGeneration };
+    const current = () => view.isCurrentReaderAnchorIdentity(identity) && view.annotationSidebarCopyRequestId === message.requestId;
+    const document = view.annotationDocument;
+    if (!document || !current() || view.annotationSourceMismatch) throw new Error("PDF 身份尚未确认。");
+    const snapshot = await this.annotationHost.store.readDocument(document, { readOnly: true });
+    if (!current()) return;
+    const rows = Array.isArray(snapshot?.annotations) ? snapshot.annotations : Object.values(snapshot?.annotations || {});
+    const row = rows.find(item => item.uuid === message.annotationUuid && item.pageIndex === message.pageIndex && item.deleted !== true);
+    if (!row || [...(snapshot.tombstones || []), ...(snapshot.deletionGuards || [])].some(item => item.uuid === message.annotationUuid))
+      throw new Error("批注尚未保存或已删除，无法复制链接。");
+    const path = view.documentFile?.path || view.file?.path;
+    if (!path) throw new Error("当前 PDF 路径不可用。");
+    const fragment = encodeReaderLinkFragment({ pageNumber: row.pageIndex + 1,
+      docKey: document.docKey, documentId: document.documentId,
+      target: { kind: "annotation", id: row.uuid }, includeIdentity: true });
+    const output = formatSelectionCopy({ path, page: row.pageIndex + 1,
+      pageCount: view.annotationPageIdentity?.pageCount, text: message.text,
+      linktext: `${path.replaceAll("#", "%23").replaceAll("|", "\\|")}#${fragment}`,
+      anchorId: row.uuid, docKey: document.docKey, documentId: document.documentId },
+      { ...this.settings, selectionCopyTemplate: this.settings.annotationCardCopyTemplate ?? "{{text}}[[{{link}}|p{{page}}]]" });
+    const work = (this.autoCopyClipboardQueue || Promise.resolve()).catch(() => {}).then(async () => {
+      if (current()) await this.copyReaderText(output);
+    });
+    this.autoCopyClipboardQueue = work;
+    await work;
+    if (current()) new Notice("已复制批注文字和链接。", 3000);
   }
 
   async copyReaderText(value) {

@@ -11,3 +11,11 @@ test('copies recovered sentence even if the original rectangle has no stored tar
  const item={targetText:null,targetTextSource:'unavailable',displayText:'一般而言，出现前',sentenceChars:[{character:'一',owner:null},{character:'般',owner:null},{character:'出',owner:0},{character:'现',owner:0}],sentenceStyles:[{kind:'Square',color:'#f00'}]};
  assert.equal(render(item),'一般<span style="border: 2px solid #f00; padding: 0px 1.2px;">出现</span>');
 });
+
+test('card default template preserves annotated HTML and links to the annotation',async()=>{
+ const {createRequire}=await import('node:module');const require=createRequire(import.meta.url);const {formatSelectionCopy}=require('../plugin/selection-copy-format.cjs');
+ const text='<mark style="background-color: #fef08a;">原文</mark>';
+ const context={path:'书.pdf',page:30,text,linktext:'书.pdf#page=30&obreader=ann.uuid'};
+ assert.equal(formatSelectionCopy(context,{selectionCopyTemplate:'{{text}}[[{{link}}|p{{page}}]]'}),`${text}[[书.pdf#page=30&obreader=ann.uuid|p30]]`);
+ assert.equal(formatSelectionCopy(context,{selectionCopyTemplate:'{{link}} / {{text}}'}),`书.pdf#page=30&obreader=ann.uuid / ${text}`);
+});
