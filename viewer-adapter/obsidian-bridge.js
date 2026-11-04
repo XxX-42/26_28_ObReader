@@ -2727,7 +2727,7 @@
         } else text.textContent = item.displayText;
         text.title = item.displayText;
         text.setAttribute("aria-label", item.displayText);
-        navigateButton.setAttribute("aria-label", `复制带标记文字：${item.displayText}`);
+        navigateButton.setAttribute("aria-label", `左侧点击跳转，右侧点击复制链接和文字：${item.displayText}`);
         const header = document.createElement("div");
         header.className = "pdfReaderAnnotationRowHeader";
         if (selectionMode) {
@@ -2858,6 +2858,7 @@
     }
 
     function onListClick(event) {
+      if (event.target?.closest?.('.pdfReaderAnnotationSelectionCheckbox')) return;
       const reviewButton = event.target?.closest?.(".pdfReaderAnnotationReviewButton");
       if (reviewButton) {
         event.preventDefault?.();
@@ -2870,12 +2871,28 @@
       const row = event.target?.closest?.("li.sidebarComment");
       if (!row || !list.contains(row)) return;
       if (event.target?.closest?.(".pdfReaderAnnotationPagePill")) { void activate(row, false); return; }
+      if (event.detail > 0) {
+        const bounds = row.getBoundingClientRect();
+        if (event.clientX < bounds.left + bounds.width / 2) { void activate(row, false); return; }
+      }
       const item = visibleItems.find(candidate => candidate.uuid === row.dataset.uuid);
       const markdown = annotationSentenceMarkdown(item);
       if (!markdown) { showStatus("此批注没有可复制的文字。"); return; }
       postToHost("annotation-sidebar-copy-request", { documentId: state.activeDocumentId,
         openRequest: state.activeOpenRequest, requestId: makeSyncUuid(),
         annotationUuid: item.uuid, pageIndex: item.pageIndex, text: markdown });
+    }
+
+    function onListPointerMove(event) {
+      const row = event.target?.closest?.('li.sidebarComment');
+      if (!row || !list.contains(row)) return;
+      const bounds = row.getBoundingClientRect();
+      const action = event.clientX < bounds.left + bounds.width / 2 ? 'navigate' : 'copy';
+      if (row.dataset.hoverAction !== action) row.dataset.hoverAction = action;
+    }
+    function onListPointerOut(event) {
+      const row = event.target?.closest?.('li.sidebarComment');
+      if (row && !row.contains(event.relatedTarget)) delete row.dataset.hoverAction;
     }
 
     function onListDragStart(event) {
@@ -2952,6 +2969,8 @@
     button.addEventListener("click", onButtonClick);
     closeButton.addEventListener("click", onCloseClick);
     list.addEventListener("click", onListClick);
+    list.addEventListener("pointermove", onListPointerMove);
+    list.addEventListener("pointerout", onListPointerOut);
     list.addEventListener("dragstart", onListDragStart);
     list.addEventListener("contextmenu", onListContextMenu);
     list.addEventListener("keydown", onListKeyDown);
@@ -3009,6 +3028,8 @@
         button.removeEventListener("click", onButtonClick);
         closeButton.removeEventListener("click", onCloseClick);
         list.removeEventListener("click", onListClick);
+        list.removeEventListener("pointermove", onListPointerMove);
+        list.removeEventListener("pointerout", onListPointerOut);
         list.removeEventListener("dragstart", onListDragStart);
         list.removeEventListener("contextmenu", onListContextMenu);
         list.removeEventListener("keydown", onListKeyDown);
