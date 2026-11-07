@@ -2023,7 +2023,19 @@ class PdfReaderView extends EditableFileView {
     const error = this.mobileRuntime.lastError;
     const label = MOBILE_STAGE_LABELS[error?.stage] || MOBILE_STAGE_LABELS.idle;
     const code = safeDiagnosticCode(error?.code);
-    return `移动端 PDF 阅读器启动失败：${label}（${code}）。请导出诊断 JSON，关闭此标签后重新打开 PDF 重试。`;
+    const descriptions = {
+      "asset-prewarm-failed": "预加载内置资源失败，资源可能尚未完整同步或无法读取",
+      "asset-read-failed": "无法读取内置资源，插件文件可能不完整或尚未同步完成",
+      "asset-hash-mismatch": "内置资源校验失败，插件文件可能不完整或版本不一致",
+      "blob-url-unavailable": "当前 WebView 无法创建阅读器所需的本地资源地址",
+      "bridge-resource": "阅读器与 Obsidian 的桥接模块未能加载",
+      "pdf-module-import": "PDF 模块未能加载，可能是资源或 WebView 兼容性问题",
+      "pdfjs-global-missing": "PDF 模块加载后未提供预期接口，可能是资源版本不一致",
+      "viewer-module-import": "阅读器界面模块未能加载，可能是资源或 WebView 兼容性问题",
+      "mobile-bootstrap": "阅读器未完成启动，具体原因尚未确定",
+    };
+    const detail = descriptions[code];
+    return `移动端 PDF 阅读器启动失败：${label}（${code}）。${detail}。请导出诊断 JSON，关闭此标签后重新打开 PDF 重试。`;
   }
 
   revokeMobileResourceUrl(generation, key) {

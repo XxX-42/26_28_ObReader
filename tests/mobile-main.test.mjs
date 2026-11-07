@@ -718,6 +718,19 @@ test("mobile startup exposes sanitized stages without replacing an opened docume
   view.mobileRuntime.lastError = { stage: "viewer-module-loading", code: "viewer-module-import" };
   assert.match(view.mobileStartupFailureMessage(), /加载阅读器模块（viewer-module-import）/);
   assert.match(view.mobileStartupFailureMessage(), /重新打开 PDF 重试/);
+  for (const [code, detail] of [
+    ["asset-read-failed", /无法读取内置资源/],
+    ["asset-hash-mismatch", /内置资源校验失败/],
+    ["blob-url-unavailable", /无法创建阅读器所需的本地资源地址/],
+    ["bridge-resource", /桥接模块未能加载/],
+    ["pdf-module-import", /PDF 模块未能加载/],
+    ["pdfjs-global-missing", /未提供预期接口/],
+    ["viewer-module-import", /界面模块未能加载/],
+    ["mobile-bootstrap", /具体原因尚未确定/],
+  ]) {
+    view.mobileRuntime.lastError = { stage: "assets-loading", code };
+    assert.match(view.mobileStartupFailureMessage(), detail);
+  }
   view.mobileRuntime.lastError = { stage: "Private/secret.pdf", code: "secret bytes" };
   assert.doesNotMatch(view.mobileStartupFailureMessage(), /secret|Private/);
   view.ready = true;
