@@ -469,3 +469,16 @@ test("a PDF leaf created before plugin enable remains in the built-in view", asy
   );
   await plugin.onunload();
 });
+
+test('default PDF routing accepts an app proxy sharing the workspace', async () => {
+  const harness = createHarness();
+  const plugin = harness.newPlugin();
+  await plugin.onload();
+  plugin.app = new Proxy(harness.app, {});
+  const file = new harness.TFile('PDF迁移测试/proxy.pdf');
+  harness.files.set(file.path, file);
+  const leaf = harness.app.workspace.getLeaf(true);
+  await leaf.openFile(file);
+  assert.equal(leaf.view.getViewType(), VIEW_TYPE);
+  plugin.onunload();
+});

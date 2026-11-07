@@ -441,7 +441,7 @@ function installPdfOpenRouting(plugin) {
 
   routing.setViewStateWrapper = function (viewState, eState) {
     const activePlugin = routing.plugin;
-    if (!routing.active || !activePlugin || this.app !== activePlugin.app) {
+    if (!routing.active || !activePlugin || this.app?.workspace !== activePlugin.app?.workspace) {
       return routing.originalSetViewState.call(this, viewState, eState);
     }
 
@@ -587,7 +587,7 @@ function installPdfOpenRouting(plugin) {
       if (
         !routing.active ||
         !activePlugin ||
-        this.app !== activePlugin.app ||
+        this.app?.workspace !== activePlugin.app?.workspace ||
         !(view instanceof PdfReaderView)
       ) {
         return routing.originalDetach.apply(this, args);
@@ -615,7 +615,7 @@ function installPdfOpenRouting(plugin) {
         if (
           !routing.active ||
           routing.plugin !== activePlugin ||
-          this.app !== activePlugin.app
+          this.app?.workspace !== activePlugin.app?.workspace
         ) {
           view.cancelPreparedClose(documentId, openRequest);
           return routing.originalDetach.apply(this, args);
