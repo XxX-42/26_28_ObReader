@@ -118,6 +118,8 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
       const beforeText=await raw(paths.current);
       if(beforeText===null)throw error('V15_DOCUMENT_MISSING','Initialize a paired document before saving reader state.');
       const before=currentFrom(beforeText,sourcePath,pairId);
+      // Do not publish reader position over a mismatched annotation/history pair.
+      await historyTextFor(before,paths.history);
       const states=before.header.readerStates||{};
       if(!states||typeof states!=='object'||Array.isArray(states))throw error('V15_FILE_INVALID','Invalid reader state map.');
       if(Object.hasOwn(states,readerDeviceId)&&canonicalJson(states[readerDeviceId])===canonicalJson(saved))return false;

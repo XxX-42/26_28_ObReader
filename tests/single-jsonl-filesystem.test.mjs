@@ -127,6 +127,8 @@ test('real filesystem rejects corrupted current or history files without overwri
  assert.equal(await readFile(absolute(paths.current),'utf8'),brokenCurrent);assert.equal(await readFile(absolute(paths.history),'utf8'),historyOriginal);
  await writeFile(absolute(paths.current),currentOriginal);
  const brokenHistory=historyOriginal.slice(0,Math.floor(historyOriginal.length/2));await writeFile(absolute(paths.history),brokenHistory);
+ await assert.rejects(store.saveReaderState({sourcePath:document.sourcePath,pairId,deviceId:'mobile',state:{page:2}}),{code:'V15_HISTORY_MISSING'});
+ assert.equal(await readFile(absolute(paths.current),'utf8'),currentOriginal);
  await assert.rejects(store.save({sourcePath:document.sourcePath,pairId,changes:[{...row,payload:{targetText:'must not save'}}]}),{code:'V15_HISTORY_MISSING'});
  assert.equal(await readFile(absolute(paths.current),'utf8'),currentOriginal);assert.equal(await readFile(absolute(paths.history),'utf8'),brokenHistory);
 });
