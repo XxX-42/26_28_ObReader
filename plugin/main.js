@@ -3940,10 +3940,14 @@ class PdfReaderView extends EditableFileView {
       if (!this.plugin.isMobileRuntime || message.rendererGeneration !== this.rendererGeneration ||
           message.documentId !== this.documentId || message.openRequest !== this.openRequest ||
           !["touch", "pen", "mouse"].includes(message.pointerType)) return;
-      if (this.lastInputPointerType !== message.pointerType) {
-        this.lastInputPointerType = message.pointerType;
-        this.renderStatus();
-      }
+      if (!["DOWN", "UP", "CANCEL"].includes(message.phase)) return;
+      const bounded = value => Number.isFinite(value) ? Math.max(-1000000, Math.min(1000000, Math.round(value))) : 0;
+      this.lastInputPointerType = message.pointerType;
+      const names = { touch: "手指", pen: "Apple Pencil", mouse: "鼠标/触控板" };
+      this.lastInputDeviceText = `${names[message.pointerType]} ${message.phase} · id=${bounded(message.pointerId)} · button=${bounded(message.button)} buttons=${bounded(message.buttons)} · (${bounded(message.x)}, ${bounded(message.y)})`;
+      const display = this.statusEl?.querySelector?.(".pdf-reader-input-device");
+      if (display) display.textContent = `输入设备：${this.lastInputDeviceText} · `;
+      else this.renderStatus();
       return;
     }
 
@@ -4436,7 +4440,7 @@ class PdfReaderView extends EditableFileView {
     status.empty?.();
     if (this.plugin.isMobileRuntime && typeof status.createEl === "function") {
       const names = { touch: "手指", pen: "Apple Pencil", mouse: "鼠标/触控板" };
-      status.createEl("span", { cls: "pdf-reader-input-device", text: `输入设备：${names[this.lastInputPointerType] || "尚无输入"} · ` });
+      status.createEl("span", { cls: "pdf-reader-input-device", text: `输入设备：${this.lastInputDeviceText || names[this.lastInputPointerType] || "尚无输入"} · ` });
     }
     if (typeof status.createEl === "function") {
       status.createEl("span", { cls: "pdf-reader-status-message", text: this.lastStatusMessage });

@@ -10082,11 +10082,16 @@
     }, 0);
   }
 
+  function reportInputDevice(intent, phase) {
+    if (!["touch", "pen", "mouse"].includes(intent.pointerType)) return;
+    postToHost("reader-input-device", { pointerType: intent.pointerType, phase,
+      pointerId: intent.pointerId, button: intent.button, buttons: intent.buttons,
+      x: Math.round(intent.clientPoint?.x || 0), y: Math.round(intent.clientPoint?.y || 0),
+      documentId: state.activeDocumentId, openRequest: state.activeOpenRequest });
+  }
+
   function onBridgePointerDown(intent, controls) {
-    if (["touch", "pen", "mouse"].includes(intent.pointerType)) {
-      postToHost("reader-input-device", { pointerType: intent.pointerType,
-        documentId: state.activeDocumentId, openRequest: state.activeOpenRequest });
-    }
+    reportInputDevice(intent, "DOWN");
     state.autoCopySignature=null;
     postToHost('reader-auto-copy-cancel',{documentId:state.activeDocumentId,openRequest:state.activeOpenRequest,sequence:++state.autoCopySequence});
     state.autoCopyPointer = intent.pointerType === "mouse" && intent.button === 0 &&
@@ -10437,6 +10442,7 @@
   }
 
   function onBridgePointerEnd(intent, controls) {
+    reportInputDevice(intent, intent.type === "pointercancel" ? "CANCEL" : "UP");
     const autoPointer = state.autoCopyPointer;
     if (autoPointer?.id === intent.pointerId) {
       state.autoCopyPointer = null;
