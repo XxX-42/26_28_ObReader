@@ -1182,6 +1182,18 @@ test(
     const priorMenuScale = await viewer.evaluate(() => PDFViewerApplication.pdfViewer.currentScaleValue);
     const menuBounds = await squareBounds();
     const menuOffset = await iframeOffset();
+    const ordering = await viewer.evaluate(() => {
+      const viewer = document.getElementById("viewerContainer");
+      const menu = document.querySelector(".pdfReaderPageContextMenu");
+      viewer.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 2, buttons: 2 }));
+      viewer.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, buttons: 2, clientX: 100, clientY: 100 }));
+      const held = menu.hidden;
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 2, buttons: 0 }));
+      const released = menu.hidden;
+      menu.hidden = true;
+      return { held, released };
+    });
+    assert.deepEqual(ordering, { held: true, released: false });
     await page.mouse.click(menuOffset.x + menuBounds.x - 50, menuOffset.y + menuBounds.y, {button:"right"});
     await viewer.waitForFunction(() => !document.querySelector(".pdfReaderPageContextMenu")?.hidden);
     assert.equal(await viewer.evaluate(() => [...document.querySelectorAll(".pdfReaderPageContextRow")].every(row => {

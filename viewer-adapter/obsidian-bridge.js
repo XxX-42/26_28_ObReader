@@ -10359,9 +10359,9 @@
         row.append(button);
       }
     }
-    viewer.addEventListener("contextmenu", event => {
-      if (!state.app?.pdfDocument || event.target.closest?.("input,textarea,select,[contenteditable=true],[role=dialog]")) return;
-      event.preventDefault();
+    let rightButtonDown = false;
+    let pendingContext = null;
+    const showPageMenu = ({ clientX, clientY }) => {
       for (const button of menu.querySelectorAll("[data-layout-action]")) {
         const action = button.dataset.layoutAction;
         const original = document.getElementById(action);
@@ -10370,8 +10370,25 @@
         button.setAttribute("aria-checked", String(active));
       }
       menu.hidden = false;
-      menu.style.left = `${Math.max(0, Math.min(event.clientX, innerWidth - menu.offsetWidth))}px`;
-      menu.style.top = `${Math.max(0, Math.min(event.clientY, innerHeight - menu.offsetHeight))}px`;
+      menu.style.left = `${Math.max(0, Math.min(clientX, innerWidth - menu.offsetWidth))}px`;
+      menu.style.top = `${Math.max(0, Math.min(clientY, innerHeight - menu.offsetHeight))}px`;
+    };
+    viewer.addEventListener("pointerdown", event => {
+      if (event.button === 2) { rightButtonDown = true; pendingContext = null; }
+    }, { capture: true, signal });
+    window.addEventListener("pointerup", event => {
+      if (event.button !== 2) return;
+      rightButtonDown = false;
+      if (pendingContext) { const point = pendingContext; pendingContext = null; showPageMenu(point); }
+    }, { capture: true, signal });
+    window.addEventListener("pointercancel", () => { rightButtonDown = false; pendingContext = null; }, { capture: true, signal });
+    window.addEventListener("blur", () => { rightButtonDown = false; pendingContext = null; }, { signal });
+    viewer.addEventListener("contextmenu", event => {
+      if (!state.app?.pdfDocument || event.target.closest?.("input,textarea,select,[contenteditable=true],[role=dialog]")) return;
+      event.preventDefault();
+      const point = { clientX: event.clientX, clientY: event.clientY };
+      if (rightButtonDown || (event.buttons & 2)) pendingContext = point;
+      else showPageMenu(point);
     }, { signal });
     document.addEventListener("pointerdown", event => { if (!menu.contains(event.target)) menu.hidden = true; }, { capture: true, signal });
     document.addEventListener("keydown", event => { if (event.key === "Escape") menu.hidden = true; }, { signal });
