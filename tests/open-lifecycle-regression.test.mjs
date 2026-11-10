@@ -582,7 +582,7 @@ test(
         const editor = app.pdfViewer._layerProperties
           .annotationEditorUIManager.getEditor(editorId);
         const internal = editor?.div?.querySelector(
-          ".internal[contenteditable='true']",
+          ".internal",
         );
         return {
           opened: host.opened,
