@@ -10360,6 +10360,8 @@
       }
     }
     let rightButtonDown = false;
+    let rightMoved = false;
+    let rightOrigin = null;
     let pendingContext = null;
     const showPageMenu = ({ clientX, clientY }) => {
       for (const button of menu.querySelectorAll("[data-layout-action]")) {
@@ -10374,11 +10376,16 @@
       menu.style.top = `${Math.max(0, Math.min(clientY, innerHeight - menu.offsetHeight))}px`;
     };
     viewer.addEventListener("pointerdown", event => {
-      if (event.button === 2) { rightButtonDown = true; pendingContext = null; }
+      if (event.button === 2) { rightButtonDown = true; rightMoved = false; rightOrigin = { x: event.clientX, y: event.clientY }; pendingContext = null; }
+    }, { capture: true, signal });
+    window.addEventListener("pointermove", event => {
+      if (rightButtonDown && rightOrigin && (event.clientX !== rightOrigin.x || event.clientY !== rightOrigin.y)) { rightMoved = true; pendingContext = null; }
     }, { capture: true, signal });
     window.addEventListener("pointerup", event => {
       if (event.button !== 2) return;
+      if (rightOrigin && (event.clientX !== rightOrigin.x || event.clientY !== rightOrigin.y)) rightMoved = true;
       rightButtonDown = false;
+      if (rightMoved) { pendingContext = null; menu.hidden = true; return; }
       if (pendingContext) { const point = pendingContext; pendingContext = null; showPageMenu(point); }
     }, { capture: true, signal });
     window.addEventListener("pointercancel", () => { rightButtonDown = false; pendingContext = null; }, { capture: true, signal });
@@ -10386,6 +10393,7 @@
     viewer.addEventListener("contextmenu", event => {
       if (!state.app?.pdfDocument || event.target.closest?.("input,textarea,select,[contenteditable=true],[role=dialog]")) return;
       event.preventDefault();
+      if (event.button === 2 && rightMoved) return;
       const point = { clientX: event.clientX, clientY: event.clientY };
       if (rightButtonDown || (event.buttons & 2)) pendingContext = point;
       else showPageMenu(point);
