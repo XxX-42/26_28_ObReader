@@ -10416,7 +10416,23 @@
     cancelManualMomentum();
   }
 
+  const inputRateSamples = new Map();
   function onBridgePointerMove(intent, controls) {
+    if (["touch", "pen", "mouse"].includes(intent.pointerType)) {
+      const now = performance.now();
+      let sample = inputRateSamples.get(intent.pointerType);
+      if (!sample || now - sample.last > 1500) sample = { start: now, last: now, count: 0 };
+      else { sample.count++; sample.last = now; }
+      const elapsed = now - sample.start;
+      if (elapsed >= 500) {
+        postToHost("reader-input-rate", { pointerType: intent.pointerType,
+          hz: Math.round(sample.count * 1000 / elapsed), documentId: state.activeDocumentId,
+          openRequest: state.activeOpenRequest });
+        sample = { start: now, last: now, count: 0 };
+      }
+      inputRateSamples.set(intent.pointerType, sample);
+    }
+
     if (state.iosDirectManipulationController?.handlePointerMove(intent, controls)) {
       return;
     }

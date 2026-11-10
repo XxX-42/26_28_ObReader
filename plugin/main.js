@@ -3936,6 +3936,19 @@ class PdfReaderView extends EditableFileView {
       return;
     }
 
+    if (message.type === "reader-input-rate") {
+      if (!this.plugin.isMobileRuntime || message.rendererGeneration !== this.rendererGeneration ||
+          message.documentId !== this.documentId || message.openRequest !== this.openRequest ||
+          !["touch", "pen", "mouse"].includes(message.pointerType) ||
+          !Number.isFinite(message.hz) || message.hz < 0 || message.hz > 2000) return;
+      this.inputEventRates ||= {};
+      this.inputEventRates[message.pointerType] = Math.round(message.hz);
+      const rates = this.statusEl?.querySelector?.(".pdf-reader-input-rates");
+      if (rates) rates.textContent = this.inputRateStatusText();
+      else this.renderStatus();
+      return;
+    }
+
     if (message.type === "reader-input-device") {
       if (!this.plugin.isMobileRuntime || message.rendererGeneration !== this.rendererGeneration ||
           message.documentId !== this.documentId || message.openRequest !== this.openRequest ||
@@ -4434,6 +4447,12 @@ class PdfReaderView extends EditableFileView {
     this.renderStatus();
   }
 
+  inputRateStatusText() {
+    const r = this.inputEventRates || {};
+    const value = key => Number.isFinite(r[key]) ? `${r[key]} Hz` : "—";
+    return `事件频率：手指 ${value("touch")} · Pencil ${value("pen")} · 鼠标/触控板 ${value("mouse")}`;
+  }
+
   renderStatus() {
     const status = this.statusEl;
     if (!status) return;
@@ -4441,6 +4460,7 @@ class PdfReaderView extends EditableFileView {
     if (this.plugin.isMobileRuntime && typeof status.createEl === "function") {
       const names = { touch: "手指", pen: "Apple Pencil", mouse: "鼠标/触控板" };
       status.createEl("span", { cls: "pdf-reader-input-device", text: `输入设备：${this.lastInputDeviceText || names[this.lastInputPointerType] || "尚无输入"} · ` });
+      status.createEl("span", { cls: "pdf-reader-input-rates", text: this.inputRateStatusText() });
     }
     if (typeof status.createEl === "function") {
       status.createEl("span", { cls: "pdf-reader-status-message", text: this.lastStatusMessage });
