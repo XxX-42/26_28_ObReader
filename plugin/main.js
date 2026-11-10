@@ -3936,6 +3936,17 @@ class PdfReaderView extends EditableFileView {
       return;
     }
 
+    if (message.type === "reader-input-device") {
+      if (!this.plugin.isMobileRuntime || message.rendererGeneration !== this.rendererGeneration ||
+          message.documentId !== this.documentId || message.openRequest !== this.openRequest ||
+          !["touch", "pen", "mouse"].includes(message.pointerType)) return;
+      if (this.lastInputPointerType !== message.pointerType) {
+        this.lastInputPointerType = message.pointerType;
+        this.renderStatus();
+      }
+      return;
+    }
+
     switch (message.type) {
       case "heavy-acquire": {
         if (message.rendererGeneration !== this.rendererGeneration || typeof message.id !== "string" || !message.id || message.documentId !== this.documentId) return;
@@ -4423,6 +4434,10 @@ class PdfReaderView extends EditableFileView {
     const status = this.statusEl;
     if (!status) return;
     status.empty?.();
+    if (this.plugin.isMobileRuntime && typeof status.createEl === "function") {
+      const names = { touch: "手指", pen: "Apple Pencil", mouse: "鼠标/触控板" };
+      status.createEl("span", { cls: "pdf-reader-input-device", text: `输入设备：${names[this.lastInputPointerType] || "尚无输入"} · ` });
+    }
     if (typeof status.createEl === "function") {
       status.createEl("span", { cls: "pdf-reader-status-message", text: this.lastStatusMessage });
     } else status.setText?.(this.lastStatusMessage);

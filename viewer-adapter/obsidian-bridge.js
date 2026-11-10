@@ -10083,6 +10083,10 @@
   }
 
   function onBridgePointerDown(intent, controls) {
+    if (["touch", "pen", "mouse"].includes(intent.pointerType)) {
+      postToHost("reader-input-device", { pointerType: intent.pointerType,
+        documentId: state.activeDocumentId, openRequest: state.activeOpenRequest });
+    }
     state.autoCopySignature=null;
     postToHost('reader-auto-copy-cancel',{documentId:state.activeDocumentId,openRequest:state.activeOpenRequest,sequence:++state.autoCopySequence});
     state.autoCopyPointer = intent.pointerType === "mouse" && intent.button === 0 &&
