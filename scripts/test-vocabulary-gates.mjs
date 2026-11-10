@@ -290,6 +290,7 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/dictionary-cache-browser.test.mjs",
     "tests/embedded-annotation-scan.test.mjs",
     "tests/native-erase-routing-browser.test.mjs",
+    "tests/ink-stroke-eraser-browser.test.mjs",
     "tests/free-text-undo-appearance-regression.test.mjs",
     "tests/free-text-native-ap-undo-regression.test.mjs",
     "tests/highlight-multiline-regression.test.mjs",

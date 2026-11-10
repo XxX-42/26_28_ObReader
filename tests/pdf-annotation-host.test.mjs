@@ -152,11 +152,12 @@ async function confirmPageIdentity(host, view) {
   });
 }
 
-async function setupPairedNativeErase(path,{pair=true}={}) {
+async function setupPairedNativeErase(path,{pair=true,ink=false}={}) {
   const adapter=makeAdapter(),app=makeApp(adapter),hashRuntime=await createPdfHashRuntime();
   const logs=[];
   const pdf=await PDFDocument.create(),page=pdf.addPage([320,420]),ctx=pdf.context;
-  const mark=PDFDict.withContext(ctx);mark.set(PDFName.of("Type"),PDFName.of("Annot"));mark.set(PDFName.of("Subtype"),PDFName.of("Highlight"));
+  const mark=PDFDict.withContext(ctx);mark.set(PDFName.of("Type"),PDFName.of("Annot"));mark.set(PDFName.of("Subtype"),PDFName.of(ink?"Ink":"Highlight"));
+  if(ink){mark.set(PDFName.of("Rect"),ctx.obj([20,30,100,100]));mark.set(PDFName.of("InkList"),ctx.obj([[20,30,100,30],[20,60,100,60],[20,100,100,100]]));}
   const markRef=ctx.register(mark),mark2=PDFDict.withContext(ctx);mark2.set(PDFName.of("Type"),PDFName.of("Annot"));mark2.set(PDFName.of("Subtype"),PDFName.of("Underline"));
   const mark2Ref=ctx.register(mark2),annots=PDFArray.withContext(ctx);annots.push(markRef);annots.push(mark2Ref);page.node.set(PDFName.of("Annots"),annots);
   const source=new Uint8Array(await pdf.save({useObjectStreams:false}));
@@ -590,4 +591,40 @@ test("self-originated sidecar notifications do not re-enter checkpoint materiali
   assert.equal(materializations, afterOpen + 2,
     "an unmatched external operation event must still refresh open Readers");
   host.dispose();
+});
+
+test("native Ink partial paths and final tombstone persist only in JSONL without writing the paired PDF",async()=>{
+  const f=await setupPairedNativeErase("Books/stroke-ink.pdf",{ink:true}),before=new Uint8Array(f.app.vault.bytes).slice();
+  f.app.vault.appendBinary=async()=>{throw Error("Ink must not append to the PDF");};
+  f.app.vault.modifyBinary=async()=>{throw Error("Ink must not rewrite the PDF");};
+  const uuid="existing-native-ink",ref=f.markRefs[0].toString();
+  for(const [index,count] of [2,1,0].entries()){
+    const paths={points:[[20,30,100,30],[20,100,100,100]].slice(0,count)};
+    await f.host.handleMessage(f.view,{type:"save",documentId:f.view.documentId,openRequest:1,requestId:`stroke-${count}`,revision:index+2,batchId:`stroke-${count}`,
+      operations:[{uuid,kind:"Ink",pageIndex:0,embeddedRef:ref,provenance:"embedded",deleted:count===0,clock:{timestamp:index+20,logical:1,deviceId:"viewer",opId:`stroke-${count}`},
+        ...(count?{payload:{editor:{annotationType:15,pageIndex:0,rect:[20,30,100,100],paths}}}:{})}]});
+    const ack=f.view.messages.findLast(m=>m.requestId===`stroke-${count}`);
+    assert.equal(ack?.type,"saved",JSON.stringify(ack));
+    assert.deepEqual(new Uint8Array(f.app.vault.bytes),before);
+    const snapshot=await f.host.store.readDocument(f.view.annotationDocument);
+    if(count)assert.equal(snapshot.annotations.find(a=>a.uuid===uuid)?.payload.editor.paths.points.length,count);
+    else assert.ok(snapshot.tombstones.some(a=>a.uuid===uuid));
+  }
+  f.host.dispose();const host=createHost(f.options),view=makeView(f.app,"Books/stroke-ink.pdf",before);
+  const opened=await host.initializeView(view,view.sourceBytes);view.documentId=opened.documentId;await confirmPageIdentity(host,view);
+  const state=await host.store.readDocument(view.annotationDocument);assert.ok(state.tombstones.some(a=>a.uuid===uuid));
+  assert.deepEqual(new Uint8Array(f.app.vault.bytes),before);host.dispose();
+});
+
+test("popout realm operations are rehomed without weakening canonical payload validation",async()=>{
+  const {runInNewContext}=await import("node:vm");
+  const f=await setupPairedNativeErase("Books/popout-ink.pdf",{ink:true}),before=new Uint8Array(f.app.vault.bytes).slice();
+  const operations=runInNewContext(`([{uuid:"popout-ink",kind:"Ink",pageIndex:0,deleted:false,clock:{timestamp:100,logical:1,deviceId:"viewer",opId:"popout-ink-op"},payload:{editor:{annotationType:15,pageIndex:0,rect:[20,30,100,100],paths:{points:[[20,30,100,30]]}}}}])`);
+  await f.host.handleMessage(f.view,{type:"save",documentId:f.view.documentId,openRequest:1,requestId:"popout-save",revision:2,batchId:"popout-save",operations});
+  const ack=f.view.messages.findLast(m=>m.requestId==="popout-save");assert.equal(ack?.type,"saved",JSON.stringify(ack));
+  assert.deepEqual(new Uint8Array(f.app.vault.bytes),before);
+  const invalid=runInNewContext(`([{uuid:"invalid-popout",kind:"Ink",pageIndex:0,deleted:false,clock:{timestamp:101,logical:1,deviceId:"viewer",opId:"invalid-op"},payload:{editor:{unexpected:new Date()}}}])`);
+  await f.host.handleMessage(f.view,{type:"save",documentId:f.view.documentId,openRequest:1,requestId:"invalid-popout",revision:3,batchId:"invalid-popout",operations:invalid});
+  assert.equal(f.view.messages.findLast(m=>m.requestId==="invalid-popout")?.type,"error","non-JSON payloads must still be rejected");
+  assert.deepEqual(new Uint8Array(f.app.vault.bytes),before);f.host.dispose();
 });

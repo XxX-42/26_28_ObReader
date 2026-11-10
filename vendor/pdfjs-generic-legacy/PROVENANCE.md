@@ -155,3 +155,18 @@ Wheel icons and captions use 120% of their previous font sizes.
 LingQ mode retains its original four sectors; wheel text and icons use 105% of their earlier size.
 
 Wheel safe margins accommodate the gap outside the color indicators.
+
+## Audited local addition: stroke eraser (2026-11-10)
+
+The existing eraser deleted an entire InkEditor on a bounding-box hit. The
+browser RED erases the empty interior of a curved three-stroke object. The
+correction tests the real Bezier path with a small pointer radius, retains
+unhit strokes under the same editor/UUID, and shares one undo snapshot per
+object per gesture. The last stroke uses the existing deletion path.
+
+Private DrawingEditor outlines require a narrow replaceInkPaths adapter to
+update the draw layer and bounds together. AnnotationEditorUIManager adds one
+normal undo command, not a new storage protocol. Native Ink serialization now
+recognizes path edits, and its obsolete transparent hit polylines are cleared
+when the path list shortens. The bridge preserves linked-annotation guards.
+PDF.js version, Worker, annotation schema and JSONL operation types are unchanged.

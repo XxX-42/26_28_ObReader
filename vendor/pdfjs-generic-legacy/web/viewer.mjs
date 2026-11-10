@@ -11470,6 +11470,9 @@ var es_iterator_find = __webpack_require__(4059);
 
 const ERASABLE_EDITOR_SELECTOR = [".freeTextEditor", ".highlightEditor", ".inkEditor", ".stampEditor", ".signatureEditor"].join(",");
 class PDFAnnotationEraser {
+  #inkTransactions = new Map();
+  #lastErasePoint = null;
+  #hitContext = document.createElement("canvas").getContext("2d");
   #rightSession = null;
   #rightUndoDocument = null;
   #suppressContextMenuUntil = 0;
@@ -11516,7 +11519,7 @@ class PDFAnnotationEraser {
     this.#isEnabled = mode === AnnotationEditorType.ERASER;
     document.body.classList.toggle("editorEraserMode", this.#isEnabled);
     if (!this.#isEnabled) {
-      this.#pointerId = null;
+      this.cancelTemporaryStroke();
       this.#erasedEditorIds.clear();
     }
     if (this.#isEnabled && this.#rightSession?.activated) {
@@ -11529,6 +11532,8 @@ class PDFAnnotationEraser {
     session.ready = true;
     if (!session.cancelled && this.#pdfViewer.pdfDocument === session.document) {
       this.#erasedEditorIds.clear();
+      this.#inkTransactions.clear();
+      this.#lastErasePoint = null;
       if (!session.ending) this.#viewerContainer.setPointerCapture?.(session.pointerId);
       this.#eraseAt(session.start);
       this.#eraseAt(session.last);
@@ -11546,6 +11551,8 @@ class PDFAnnotationEraser {
     if (session.activated && this.#erasedEditorIds.size && this.#pdfViewer.pdfDocument === session.document) this.#rightUndoDocument = session.document;
     this.#rightSession = null;
     this.#erasedEditorIds.clear();
+    this.#inkTransactions.clear();
+    this.#lastErasePoint = null;
     if (session.activated && this.#pdfViewer.pdfDocument === session.document && this.#pdfViewer.annotationEditorMode !== session.originalMode) {
       this.#eventBus.dispatch("switchannotationeditormode", {
         source: this, mode: session.originalMode, isTemporary: true, createNewEditor: false
@@ -11553,6 +11560,13 @@ class PDFAnnotationEraser {
     }
   }
   cancelTemporaryStroke() {
+    if (this.#pointerId !== null) {
+      if (this.#viewerContainer.hasPointerCapture?.(this.#pointerId)) this.#viewerContainer.releasePointerCapture(this.#pointerId);
+      this.#pointerId = null;
+      this.#inkTransactions.clear();
+      this.#lastErasePoint = null;
+      this.#erasedEditorIds.clear();
+    }
     if (!this.#rightSession) return;
     this.#rightSession.cancelled = true;
     this.#finishRightStroke();
@@ -11574,22 +11588,68 @@ class PDFAnnotationEraser {
     }
     return null;
   }
+  #inkHits(editor, event) {
+    const page = this.#pdfViewer.getPageView(editor.pageIndex);
+    if (!page || !this.#hitContext) return [];
+    const rect = page.div.getBoundingClientRect();
+    const viewport = page.viewport;
+    const previous = this.#lastErasePoint || event;
+    const box = editor.div?.getBoundingClientRect();
+    if (!box || Math.max(previous.clientX,event.clientX)+5 < box.left || Math.min(previous.clientX,event.clientX)-5 > box.right ||
+        Math.max(previous.clientY,event.clientY)+5 < box.top || Math.min(previous.clientY,event.clientY)-5 > box.bottom) return [];
+    const paths = editor.serializeDraw(false);
+    const radius = 5;
+    const context = this.#hitContext;
+    context.lineWidth = editor._drawingOptions["stroke-width"] + radius * 2 / viewport.scale;
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    const last = this.#lastErasePoint || event;
+    const distance = Math.hypot(event.clientX-last.clientX,event.clientY-last.clientY);
+    const steps = Math.min(2048, Math.max(1,Math.ceil(distance / 2)));
+    const samples = [];
+    for (let i=0;i<=steps;i++) {
+      samples.push(viewport.convertToPdfPoint(last.clientX+(event.clientX-last.clientX)*i/steps-rect.left,
+        last.clientY+(event.clientY-last.clientY)*i/steps-rect.top));
+    }
+    return paths.lines.flatMap((line,index) => {
+      const path = new Path2D();
+      path.moveTo(line[4],line[5]);
+      if (line.length === 6) path.lineTo(line[4]+0.001,line[5]);
+      for (let i=6;i<line.length;i+=6) {
+        if (Number.isNaN(line[i]) || line[i] === null) path.lineTo(line[i+4],line[i+5]);
+        else path.bezierCurveTo(...line.slice(i,i+6));
+      }
+      return samples.some(([x,y])=>context.isPointInStroke(path,x,y)) ? [index] : [];
+    });
+  }
   #eraseAt(event) {
-    const editorElement = this.#getEditorElement(event.clientX, event.clientY);
-    const editorId = editorElement?.id;
-    if (!editorId || this.#erasedEditorIds.has(editorId)) {
-      return false;
-    }
     const uiManager = this.#uiManager;
-    const editor = uiManager?.getEditor(editorId);
-    if (!editor) {
-      return false;
+    const direct = this.#getEditorElement(event.clientX,event.clientY);
+    // Ink has an exact curve hit test. A bounding box hit is only a candidate,
+    // and must not hide another stroke underneath it.
+    const pageRoot = direct?.closest(".page") || document.elementsFromPoint(event.clientX,event.clientY)
+      .map(element => element.closest(".page")).find(Boolean);
+    const candidates = new Set([direct,...pageRoot?.querySelectorAll(ERASABLE_EDITOR_SELECTOR) || []]);
+    let changed = false;
+    for (const element of candidates) {
+      let editor = element && uiManager?.getEditor(element.id);
+      if (editor?.editorType === "ink" && uiManager.resolveInkEraserEditor) editor = uiManager.resolveInkEraserEditor(editor);
+      if (!editor) continue;
+      if (editor.editorType === "ink") {
+        const hits = this.#inkHits(editor,event);
+        if (!hits.length) continue;
+        const transaction = uiManager.eraseInkStrokes(editor,hits,this.#inkTransactions.get(editor.id));
+        this.#inkTransactions.set(editor.id,transaction);
+      } else {
+        if (element !== direct || this.#erasedEditorIds.has(element.id)) continue;
+        uiManager.deleteEditor(editor);
+      }
+      this.#erasedEditorIds.add(element.id);
+      changed = true;
     }
-    this.#erasedEditorIds.add(editorId);
-    uiManager.deleteEditor(editor);
-    event.preventDefault();
-    event.stopPropagation();
-    return true;
+    this.#lastErasePoint = {clientX:event.clientX,clientY:event.clientY};
+    if (changed) { event.preventDefault(); event.stopPropagation(); }
+    return changed;
   }
   #pointerDown(event) {
     if (event.button === 2 && event.pointerType === "mouse" && this.#pdfViewer.pdfDocument && this.#pdfViewer.annotationEditorMode !== AnnotationEditorType.DISABLE && !event.target.closest?.("input,textarea,select,[contenteditable]:not([contenteditable=false]),[role=dialog]")) {
@@ -11605,6 +11665,8 @@ class PDFAnnotationEraser {
     }
     this.#pointerId = event.pointerId;
     this.#erasedEditorIds.clear();
+    this.#inkTransactions.clear();
+    this.#lastErasePoint = null;
     this.#viewerContainer.setPointerCapture?.(event.pointerId);
     event.preventDefault();
     event.stopPropagation();
@@ -11657,6 +11719,8 @@ class PDFAnnotationEraser {
     this.#viewerContainer.releasePointerCapture?.(event.pointerId);
     this.#pointerId = null;
     this.#erasedEditorIds.clear();
+    this.#inkTransactions.clear();
+    this.#lastErasePoint = null;
   }
   #keyDown(event) {
     // NONE normally removes the editor keyboard listener. Keep history usable

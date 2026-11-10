@@ -10626,6 +10626,34 @@ class AnnotationEditorUIManager {
       mustExec: true
     });
   }
+  // One mutable command per InkEditor per eraser gesture. The payload remains
+  // the normal Ink paths; no annotation identity or persistence schema changes.
+  eraseInkStrokes(editor, indices, transaction = null) {
+    if (!editor || !this.#allEditors.has(editor.id) || editor.editorType !== "ink" || !indices.length) return transaction;
+    const current = editor.serializeDraw(false);
+    const keep = current.points.map((_, i) => i).filter(i => !indices.includes(i));
+    if (keep.length === current.points.length) return transaction;
+    const paths = { lines: keep.map(i => current.lines[i]), points: keep.map(i => current.points[i]) };
+    if (!transaction) {
+      transaction = { before: { lines: current.lines, points: current.points }, after: paths };
+      const apply = paths => {
+        if (!paths.points.length) { editor.remove(); return; }
+        if (!this.#allEditors.has(editor.id)) this.#addEditorToLayer(editor);
+        editor.replaceInkPaths(paths);
+        // AnnotationStorage stores editor references, so notify a mutation with
+        // a private runtime counter rather than re-adding the same reference.
+        this.addToAnnotationStorage(editor);
+        this.#annotationStorage?.setValue(editor.id, { _inkStrokeRevision: (editor._inkStrokeRevision || 0) + 1 });
+      };
+      transaction.apply = apply;
+      this.addCommands({cmd: () => apply(transaction.after), undo: () => apply(transaction.before), mustExec: true});
+    } else {
+      transaction.after = paths;
+      transaction.apply(paths);
+      this.#dispatchUpdateStates({hasSomethingToUndo:true,hasSomethingToRedo:false,isEmpty:this.#isEmpty()});
+    }
+    return transaction;
+  }
   deleteEditor(editor) {
     if (!editor || !this.#allEditors.has(editor.id)) {
       return;
@@ -24219,6 +24247,24 @@ class DrawingEditor extends AnnotationEditor {
     editor.rotate();
     return editor;
   }
+  // Narrow adapter for the eraser: update private outlines and their draw
+  // layer/bounds together. Serialized copies alone cannot update the editor.
+  replaceInkPaths(paths) {
+    if (this.editorType !== "ink" || !paths.points.length || !this.parent) return;
+    const [pageX, pageY] = this.pageTranslation;
+    const [pageWidth, pageHeight] = this.pageDimensions;
+    const outlines = this.constructor.deserializeDraw(pageX, pageY, pageWidth, pageHeight, this.constructor._INNER_MARGIN, {
+      paths, rotation: this.rotation, thickness: this._drawingOptions["stroke-width"]
+    });
+    if (this._drawId !== null) this.parent.drawLayer.remove(this._drawId);
+    this._drawId = null;
+    this.#createDrawOutlines({drawOutlines:outlines});
+    this.onScaleChanging();
+    this.rotate();
+    // Undo to the original paths still needs an explicit external snapshot;
+    // serializing null would turn that restore into a deletion.
+    this._inkPathsChanged = true;
+  }
   serializeDraw(isForCopying) {
     const [pageX, pageY] = this.pageTranslation;
     const [pageWidth, pageHeight] = this.pageDimensions;
@@ -28242,7 +28288,8 @@ class InkAnnotationElement extends AnnotationElement {
     }
     if (points) {
       for (let i = 0, ii = this.#polylines.length; i < ii; i++) {
-        this.#polylines[i].setAttribute("points", points[i].join(","));
+        // Stroke erasure can shorten this list; clear obsolete hit outlines.
+        this.#polylines[i].setAttribute("points", points[i]?.join(",") || "");
       }
     }
     if (rect) {
@@ -29011,7 +29058,7 @@ class InkEditor extends DrawingEditor {
       opacity,
       pageIndex
     } = this._initialData;
-    return this.hasEditedComment || this._hasBeenMoved || this._hasBeenResized || serialized.color.some((c, i) => c !== color[i]) || serialized.thickness !== thickness || serialized.opacity !== opacity || serialized.pageIndex !== pageIndex;
+    return this._inkPathsChanged || this.hasEditedComment || this._hasBeenMoved || this._hasBeenResized || serialized.color.some((c, i) => c !== color[i]) || serialized.thickness !== thickness || serialized.opacity !== opacity || serialized.pageIndex !== pageIndex;
   }
   renderAnnotationElement(annotation) {
     if (this.deleted) {

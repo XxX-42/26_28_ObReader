@@ -5395,7 +5395,7 @@
         withoutTargetUuid(rowsAfterDeserialize),
       ) ||
       isEditBoundaryBusy() || state.pendingInkCommit;
-    if (isFreeText) {
+    if (isFreeText || (normalizeSyncKind(row.kind) === "Ink" && payload.isCopy === true)) {
       // The copy render path calls _moveAfterPaste. `isClone` makes that
       // method consume the marker without shifting the persisted rectangle.
       editor.isClone = true;
@@ -5957,7 +5957,7 @@
       const operationReference = after
         ? after.deleted
           ? after.reference || after.operationReference
-          : after.operationReference
+          : after.operationReference || (currentRow.kind === "Ink" ? after.reference : null)
         : before?.reference || before?.operationReference;
       const stamp = makeSyncStamp();
       const operation = {
@@ -7357,17 +7357,18 @@
     const runtimeId = editor.id;
     const reference = canonicalPdfAnnotationRef(editor.annotationElementId);
     const referenceKey = pdfAnnotationRefKey(reference);
+    const nativeInk = kind === "Ink" && referenceKey && state.externalSourceConfirmed;
     const identity = referenceKey && state.syncState?.identities?.find(candidate =>
       pdfAnnotationRefKey(candidate?.ref) === referenceKey);
     let uuid = state.annotationUuidByRuntimeId.get(runtimeId) ||
       (referenceKey && state.annotationUuidByPdfRef.get(referenceKey)) || identity?.uuid;
-    if (!uuid && referenceKey && deletingNative && state.externalSourceConfirmed && state.activeDocumentId) {
+    if (!uuid && referenceKey && (deletingNative || nativeInk) && state.externalSourceConfirmed && state.activeDocumentId) {
       uuid = `embedded-v1:${state.activeDocumentId}:${editor.pageIndex}:${reference}`;
     }
     if (uuid) {
       const externalOwner = state.externalAnnotationRows?.get(uuid)?.deleted === false || state.externalAnnotationHydration?.has(uuid);
       const previousProvenance = state.annotationProvenanceByUuid.get(uuid);
-      state.annotationProvenanceByUuid.set(uuid, externalOwner ? "external" : previousProvenance ||
+      state.annotationProvenanceByUuid.set(uuid, nativeInk ? "embedded" : externalOwner ? "external" : previousProvenance ||
         (identity || referenceKey && deletingNative ? "embedded" : "external"));
     }
     // Native editor registration can precede the source-identity handshake.
@@ -8456,9 +8457,30 @@
       return;
     }
     const cleanups = [];
-    for (const name of ['delete', 'deleteEditor']) {
+    // An editable source-PDF Ink can coexist with its hydrated external
+    // replacement after a tool switch. Erasing must consume effective state,
+    // never replay the obsolete native paths over the same UUID.
+    const previousInkResolver = manager.resolveInkEraserEditor;
+    manager.resolveInkEraserEditor = editor => {
+      if (normalizeSyncKind(editor?.editorType) !== "Ink" || !editor.annotationElementId) return editor;
+      const key = pdfAnnotationRefKey(editor.annotationElementId);
+      const uuid = state.annotationUuidByPdfRef.get(key);
+      const row = uuid && state.externalAnnotationRows.get(uuid);
+      if (!row) return editor;
+      // Mask the superseded native drawing as well as its DOM hit surface.
+      // Hiding only the source annotation layer leaves a newly enabled native
+      // InkEditor drawing visible over its authoritative external replacement.
+      if (editor.div) editor.div.hidden = true;
+      if (editor._drawId != null) editor.parent?.drawLayer?.updateProperties(editor._drawId, {rootClass:{hidden:true}});
+      if (row.deleted) return null;
+      const replacement = manager.getEditor(state.externalAnnotationHydration.get(uuid)?.runtimeId);
+      return replacement && replacement !== editor && normalizeSyncKind(replacement.editorType) === "Ink" ? replacement : null;
+    };
+    cleanups.push(() => { manager.resolveInkEraserEditor = previousInkResolver; });
+
+    for (const name of ['delete', 'deleteEditor', 'eraseInkStrokes']) {
       wrapMethod(manager, name, (original, args) => {
-        const protectedEditor = name === 'deleteEditor' ? isProtectedLinkedEditor(args[0]) :
+        const protectedEditor = name !== 'delete' ? isProtectedLinkedEditor(args[0]) :
           [...state.annotationUuidByRuntimeId.keys()].some(id => {
             const editor = manager.getEditor?.(id);
             return editor && manager.isSelected?.(editor) && isProtectedLinkedEditor(editor);
@@ -8549,6 +8571,11 @@
     // later from a deleted placeholder or guess its geometry.
     wrapMethod(manager, "addEditor", (original, [editor]) => {
       const result = original.call(manager, editor);
+      const openRequest = state.activeOpenRequest;
+      queueMicrotask(() => {
+        if (!state.disposed && state.app === app && state.activeOpenRequest === openRequest &&
+            app.pdfViewer?._layerProperties?.annotationEditorUIManager === manager) manager.resolveInkEraserEditor?.(editor);
+      });
       if (editor && !editor.__readerLinkGuardInstalled) {
         editor.__readerLinkGuardInstalled = true;
         wrapMethod(editor, "remove", (remove, args) => {

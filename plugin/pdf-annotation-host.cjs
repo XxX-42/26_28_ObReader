@@ -674,8 +674,10 @@ function createPdfAnnotationHost({
           view.annotationHydrationAllowed = false;
         }
         if (quarantined) validateQuarantinedRecovery(message, captured.document);
-        const nativeDeletes = operations.filter((operation) => operation.deleted === true && operation.provenance === "embedded");
-        const nativeRestores = operations.filter((operation) => operation.provenance === "embedded" && operation.deleted !== true);
+        // Ink path replacement and its last-stroke tombstone are external
+        // overlays. Sending them to native erase/restore would rewrite the PDF.
+        const nativeDeletes = operations.filter((operation) => operation.deleted === true && operation.provenance === "embedded" && operation.kind !== "Ink");
+        const nativeRestores = operations.filter((operation) => operation.provenance === "embedded" && operation.deleted !== true && operation.kind !== "Ink");
         const nativeOperations = [...nativeDeletes, ...nativeRestores];
         if (nativeDeletes.length && nativeRestores.length)
           throw codedError("PDF_NATIVE_ERASE_MIXED_ACTIONS", "A single save cannot combine native erase and restore actions.");
@@ -1350,6 +1352,10 @@ function createPdfAnnotationHost({
 
   function normalizeOperations(input, actorId, createClock) {
     if (input.length > 10000) throw codedError("PDF_ANNOTATION_OPERATIONS_LIMIT", "Too many annotation operations were submitted in one batch.");
+    // IPC/popout objects may have another realm's Object.prototype. Rehome
+    // them without changing types; canonical validation still rejects Date, Map,
+    // cycles and all other unsupported payloads.
+    input = structuredClone(input);
     return input.map((item) => {
       if (!item || typeof item !== "object") throw codedError("PDF_ANNOTATION_OPERATIONS_INVALID", "An annotation operation is invalid.");
       const operation = { ...item };
