@@ -10184,8 +10184,11 @@
       pointer.pointerType === "mouse" &&
       pointer.kind === "text-selection" &&
       !pointer.nativeOperation;
+    const ownedPenTextSelection = pointer.pointerType === "pen" &&
+      pointer.kind === "text-selection" && pointer.mode === 9 &&
+      pointer.penTextSelectionGesture === true;
     return !plainMouseTextSelection &&
-      (intent.pointerType === "mouse" || pointer.nativeOperation) &&
+      (ownedPenTextSelection || intent.pointerType === "mouse" || Boolean(pointer.nativeOperation)) &&
       intent.button !== 2 &&
       !(intent.button === 0 && eraserActive);
   }
@@ -10468,6 +10471,7 @@
   }
 
   function onBridgePointerOut(intent, controls) {
+    reportInputDevice(intent, "OUT");
     if (state.iosDirectManipulationController?.handlePointerOut(intent, controls)) return;
     if (
       hasPenPolicyPointer(intent.pointerId) &&
@@ -10489,6 +10493,7 @@
   }
 
   function onBridgeLostPointerCapture(intent, controls) {
+    reportInputDevice(intent, "LOST");
     if (state.iosDirectManipulationController?.handleLostPointerCapture(intent, controls)) return;
     deletePenPolicyPointer(intent.pointerId);
     runAnnotationObserver("pointer.touch-action-lost-capture", () => state.inputPolicy?.refreshPenGestureTouchAction?.());

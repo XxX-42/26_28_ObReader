@@ -45,6 +45,13 @@ test("ordinary mouse text selection is tracked without pointer capture", () => {
     { pointerType: "mouse", kind: "text-selection", nativeOperation: null },
     { pointerType: "mouse", button: 0 }, false,
   ), false);
+  for (const [change, expected] of [[{}, true], [{penTextSelectionGesture:false}, false], [{mode:3}, false], [{pointerType:"touch"}, false]]) {
+    const pointer = {pointerType:"pen", kind:"text-selection", mode:9, penTextSelectionGesture:true, ...change};
+    assert.equal(shouldCapture(pointer, {pointerType:pointer.pointerType, button:0}, false), expected);
+  }
+  const pen = {pointerType:"pen", kind:"text-selection", mode:9, penTextSelectionGesture:true};
+  assert.equal(shouldCapture(pen, {pointerType:"pen",button:2}, false), false);
+  assert.equal(shouldCapture(pen, {pointerType:"pen",button:0}, true), false);
   assert.equal(shouldCapture(
     { pointerType: "mouse", kind: "editor", nativeOperation: null },
     { pointerType: "mouse", button: 0 }, false,

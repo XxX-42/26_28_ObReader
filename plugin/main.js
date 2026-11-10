@@ -3940,7 +3940,7 @@ class PdfReaderView extends EditableFileView {
       if (!this.plugin.isMobileRuntime || message.rendererGeneration !== this.rendererGeneration ||
           message.documentId !== this.documentId || message.openRequest !== this.openRequest ||
           !["touch", "pen", "mouse"].includes(message.pointerType)) return;
-      if (!["DOWN", "UP", "CANCEL"].includes(message.phase)) return;
+      if (!["DOWN", "UP", "CANCEL", "OUT", "LOST"].includes(message.phase)) return;
       const bounded = value => Number.isFinite(value) ? Math.max(-1000000, Math.min(1000000, Math.round(value))) : 0;
       this.lastInputPointerType = message.pointerType;
       const names = { touch: "手指", pen: "Apple Pencil", mouse: "鼠标/触控板" };
